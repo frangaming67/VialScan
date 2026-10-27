@@ -7,7 +7,7 @@ import {
   LoaderCircle, MapPin, RefreshCw, Road, ShieldCheck, Sparkles, X,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import type { ConfigStatus, Defect, ReviewStatus, ScanSession, Severity } from "@/lib/types";
+import type { ConfigStatus, Defect, DefectType, ReviewStatus, ScanSession, Severity } from "@/lib/types";
 
 const RoadMap = dynamic(() => import("@/components/road-map"), {
   ssr: false,
@@ -42,6 +42,10 @@ export default function HomePage() {
   const [video, setVideo] = useState<File | null>(null);
   const [images, setImages] = useState<File[]>([]);
   const [gps, setGps] = useState<File | null>(null);
+  const [editType, setEditType] = useState<DefectType>("other");
+  const [editSeverity, setEditSeverity] = useState<Severity>("unknown");
+  const [editLatitude, setEditLatitude] = useState("");
+  const [editLongitude, setEditLongitude] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ text: string; kind: "error" | "success" | "info" } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -98,6 +102,14 @@ export default function HomePage() {
       && (statusFilter === "all" || item.review_status === statusFilter);
   }), [allDefects, typeFilter, severityFilter, statusFilter]);
   const selected = allDefects.find((item) => item.id === selectedId) ?? visibleDefects[0] ?? null;
+
+  useEffect(() => {
+    if (!selected) return;
+    setEditType(selected.defect_type);
+    setEditSeverity(selected.severity_estimated);
+    setEditLatitude(selected.latitude === null ? "" : String(selected.latitude));
+    setEditLongitude(selected.longitude === null ? "" : String(selected.longitude));
+  }, [selected?.id]);
   const pendingCount = allDefects.filter((item) => item.review_status === "pending").length;
   const highCount = allDefects.filter((item) => item.severity_estimated === "high").length;
   const georeferencedCount = allDefects.filter((item) => item.latitude !== null && item.longitude !== null).length;
@@ -169,6 +181,47 @@ export default function HomePage() {
       })));
     } catch (error) {
       setNotice({ text: error instanceof Error ? error.message : "No se pudo guardar la revisión.", kind: "error" });
+    }
+  }
+
+  async function saveCorrection(defect: Defect) {
+    const hasLatitude = editLatitude.trim() !== "";
+    const hasLongitude = editLongitude.trim() !== "";
+    if (hasLatitude !== hasLongitude) {
+      setNotice({ text: "Para corregir la ubicación completa latitud y longitud.", kind: "error" });
+      return;
+    }
+    const updates: Partial<Pick<Defect, "defect_type" | "severity_estimated" | "latitude" | "longitude">> = {
+      defect_type: editType,
+      severity_estimated: editSeverity,
+    };
+    if (hasLatitude && hasLongitude) {
+      const latitude = Number(editLatitude);
+      const longitude = Number(editLongitude);
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+        setNotice({ text: "Revisa las coordenadas: latitud va de -90 a 90 y longitud de -180 a 180.", kind: "error" });
+        return;
+      }
+      updates.latitude = latitude;
+      updates.longitude = longitude;
+    }
+    if (defect.is_synthetic) {
+      setSessions((current) => current.map((session) => ({
+        ...session,
+        defects: session.defects.map((item) => item.id === defect.id ? { ...item, ...updates } : item),
+      })));
+      setNotice({ text: "Cambios aplicados solo a esta demostración sintética.", kind: "info" });
+      return;
+    }
+    try {
+      const updated = await api.updateDefect(defect.id, updates);
+      setSessions((current) => current.map((session) => ({
+        ...session,
+        defects: session.defects.map((item) => item.id === defect.id ? updated : item),
+      })));
+      setNotice({ text: "Corrección guardada.", kind: "success" });
+    } catch (error) {
+      setNotice({ text: error instanceof Error ? error.message : "No se pudo guardar la corrección.", kind: "error" });
     }
   }
 
@@ -278,7 +331,26 @@ export default function HomePage() {
                 <div><span>Severidad estimada</span><strong>{SEVERITY_LABELS[selected.severity_estimated]}</strong></div>
                 <div><span>Observada</span><strong>{formatTime(selected.first_observed_at)}</strong></div>
               </div>
+              <div className="correction-grid">
+                <label>Tipo
+                  <select className="select" value={editType} onChange={(event) => setEditType(event.target.value as DefectType)}>
+                    {Object.entries(TYPE_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+                  </select>
+                </label>
+                <label>Severidad
+                  <select className="select" value={editSeverity} onChange={(event) => setEditSeverity(event.target.value as Severity)}>
+                    {Object.entries(SEVERITY_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+                  </select>
+                </label>
+                <label>Latitud
+                  <input className="select" inputMode="decimal" value={editLatitude} onChange={(event) => setEditLatitude(event.target.value)} placeholder="-34.60" />
+                </label>
+                <label>Longitud
+                  <input className="select" inputMode="decimal" value={editLongitude} onChange={(event) => setEditLongitude(event.target.value)} placeholder="-58.38" />
+                </label>
+              </div>
               <div className="detail-actions">
+                <button className="button" onClick={() => void saveCorrection(selected)}><Check size={13} />Guardar corrección</button>
                 <button className="button primary" onClick={() => void changeReviewStatus(selected, "confirmed")}><Check size={13} />Confirmar</button>
                 <button className="button" onClick={() => void changeReviewStatus(selected, "dismissed")}><X size={13} />Descartar</button>
               </div>

@@ -82,6 +82,9 @@ h1 { font-size: clamp(28px, 3.4vw, 42px); line-height: 1.05; letter-spacing: -.0
 .detail-meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 12px 0; }
 .detail-meta span { display: block; font-size: 9px; color: var(--muted); margin-bottom: 3px; }
 .detail-meta strong { font-size: 11px; font-weight: 700; }
+.correction-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 12px 0; }
+.correction-grid label { display: flex; flex-direction: column; gap: 5px; font-size: 9px; color: var(--muted); font-weight: 700; }
+.correction-grid .select { width: 100%; min-width: 0; font-size: 10px; }
 .evidence { width: 100%; max-height: 160px; object-fit: cover; border-radius: 9px; border: 1px solid var(--line); }
 .detail-actions { display: flex; gap: 7px; margin-top: 12px; }
 .detail-actions .button { flex: 1; padding: 8px 6px; font-size: 10px; }
@@ -118,6 +121,7 @@ h1 { font-size: clamp(28px, 3.4vw, 42px); line-height: 1.05; letter-spacing: -.0
   .map-shell { height: 380px; }
   .map-legend { gap: 7px; font-size: 9px; }
   .panel-head { align-items: flex-start; flex-direction: column; }
+  .detail-actions { flex-wrap: wrap; }
   .upload-panel { grid-template-columns: 1fr; }
   .upload-controls { justify-content: flex-start; }
   .file-input { max-width: 100%; width: 100%; }

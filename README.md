@@ -54,7 +54,7 @@ La cámara en vivo queda fuera del flujo obligatorio. El MVP prioriza la carga d
 ## Formatos de entrada
 
 - Video: MP4, MOV, AVI, WEBM o M4V, hasta `MAX_VIDEO_MB`.
-- Imágenes: JPG, PNG o WEBP, hasta 30 archivos (12 MB por archivo).
+- Imágenes: JPG, PNG o WEBP, hasta 30 archivos (12 MB por archivo). Para imágenes se usa el orden de carga y `FRAME_INTERVAL_SECONDS` como tiempo aproximado cuando no hay timestamps propios.
 - GPS: GPX con timestamps, o CSV con `latitude`, `longitude` y `elapsed_seconds`; también admite `timestamp`/`time` en lugar de tiempo relativo. Los puntos se asocian por tiempo, con interpolación únicamente entre puntos cercanos.
 - Muestreo de video: `FRAME_INTERVAL_SECONDS` (2 segundos por defecto).
 
@@ -62,7 +62,7 @@ La cámara en vivo queda fuera del flujo obligatorio. El MVP prioriza la carga d
 
 La severidad es estimada y se calcula con una heurística versionada (`heuristic-v1`) que combina categoría, confianza y área aparente de una caja aproximada. No estima profundidad, volumen ni tamaño físico. Las observaciones consecutivas del mismo tipo se agrupan dentro de la misma sesión si el tiempo y, cuando existe, la ubicación aproximada coinciden. Cada detección original queda vinculada a su fotograma.
 
-Las incidencias empiezan como `pending` y pueden quedar `confirmed` o `dismissed`. La región que devuelve el modelo es aproximada y se conserva como tal. La detección necesita revisión humana y no está validada para decisiones de seguridad vial.
+Las incidencias empiezan como `pending` y pueden quedar `confirmed` o `dismissed`. En el panel se puede corregir tipo, severidad y coordenadas. La región que devuelve el modelo es aproximada y se conserva como tal. La detección necesita revisión humana y no está validada para decisiones de seguridad vial.
 
 ## API
 
