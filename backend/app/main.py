@@ -1,11 +1,12 @@
+import asyncio
 import hashlib
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from geoalchemy2.shape import from_shape, to_shape
 from shapely.geometry import Point
@@ -19,6 +20,7 @@ from .models import Frame, MediaAsset, RoadDefect, ScanSession
 from .schemas import ConditionPointOut, DefectOut, DefectUpdate, SessionCreate, SessionOut, SessionUploadOut
 from .services.processor import process_session
 from .services.storage import signed_url, upload_object
+from .services.local_analyzer import analyze_local_image
 
 logging.basicConfig(level=logging.INFO)
 app = FastAPI(title=settings.app_name, version="0.1.0")
@@ -149,6 +151,7 @@ def config_status() -> dict:
         missing.extend(["OPENAI_API_KEY", "OPENAI_MODEL"])
     return {
         "real_processing_ready": not missing,
+        "local_processing_ready": True,
         "missing_variables": list(dict.fromkeys(missing)),
         "frame_interval_seconds": settings.frame_interval_seconds,
         "model": settings.openai_model if settings.analysis_ready else None,
@@ -158,6 +161,103 @@ def config_status() -> dict:
 @app.get("/api/demo")
 def demo_data() -> dict:
     return DEMO
+
+
+@app.post("/api/local-analysis/images")
+async def analyze_images_locally(
+    images: Annotated[list[UploadFile], File()],
+    name: Annotated[str, Form()] = "Análisis local de fotos",
+) -> dict:
+    if not images or len(images) > 30:
+        raise HTTPException(status_code=400, detail="Carga entre 1 y 30 imágenes.")
+    if any(Path(item.filename or "").suffix.lower() not in IMAGE_SUFFIXES for item in images):
+        raise HTTPException(status_code=415, detail="Usa imágenes JPG, PNG o WEBP.")
+
+    session_id = uuid4()
+    started_at = datetime.now(timezone.utc)
+    defects = []
+    condition_points = []
+    category_counts: dict[str, int] = {}
+    severity_counts: dict[str, int] = {}
+    condition_counts = {"good": 0, "fair": 0, "poor": 0, "not_assessable": 0}
+    total_image_bytes = 0
+
+    for index, upload in enumerate(images):
+        image_bytes = await upload.read(12 * 1024 * 1024 + 1)
+        if len(image_bytes) > 12 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail=f"{upload.filename or 'Una imagen'} supera el límite de 12 MB.")
+        total_image_bytes += len(image_bytes)
+        if total_image_bytes > 30 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="La secuencia completa supera el límite de 30 MB.")
+        if not image_bytes:
+            raise HTTPException(status_code=400, detail=f"{upload.filename or 'Una imagen'} está vacía.")
+        try:
+            result = await asyncio.to_thread(analyze_local_image, image_bytes)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except RuntimeError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+        frame_id = uuid4()
+        elapsed_seconds = index * settings.frame_interval_seconds
+        condition = result["road_condition"]
+        condition_counts[condition] += 1
+        condition_points.append({
+            "frame_id": str(frame_id),
+            "elapsed_seconds": elapsed_seconds,
+            "road_condition": condition,
+            "confidence": result["frame_confidence"],
+            "summary": result["summary"],
+            "latitude": None,
+            "longitude": None,
+            "is_synthetic": False,
+        })
+        for detection in result["detections"]:
+            defect_id = uuid4()
+            defect_type = detection["defect_type"]
+            severity = detection["severity_estimated"]
+            category_counts[defect_type] = category_counts.get(defect_type, 0) + 1
+            severity_counts[severity] = severity_counts.get(severity, 0) + 1
+            defects.append({
+                "id": str(defect_id),
+                "session_id": str(session_id),
+                "defect_type": defect_type,
+                "severity_estimated": severity,
+                "severity_score": detection["severity_score"],
+                "review_status": "pending",
+                "description": f"{upload.filename or 'Foto'}: {detection['description']}",
+                "first_observed_at": elapsed_seconds,
+                "last_observed_at": elapsed_seconds,
+                "confidence": detection["confidence"],
+                "latitude": None,
+                "longitude": None,
+                "evidence_url": result["evidence_url"],
+                "is_synthetic": False,
+                "is_local": True,
+            })
+
+    finished_at = datetime.now(timezone.utc)
+    frames_total = len(images)
+    return {
+        "id": str(session_id),
+        "name": name.strip() or "Análisis local de fotos",
+        "status": "completed",
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        "error_message": None,
+        "is_local": True,
+        "analysis_summary": {
+            "frames_total": frames_total,
+            "condition_counts": condition_counts,
+            "condition_percentages": {key: round(value * 100 / frames_total, 1) for key, value in condition_counts.items()},
+            "defect_observations": len(defects),
+            "consolidated_incidents": len(defects),
+            "category_counts": category_counts,
+            "severity_counts": severity_counts,
+        },
+        "condition_points": condition_points,
+        "defects": defects,
+    }
 
 
 @app.post("/api/sessions", response_model=SessionOut)

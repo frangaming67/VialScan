@@ -9,3 +9,4 @@ shapely>=2.0,<3.0
 openai>=1.60,<3.0
 httpx>=0.28,<1.0
 opencv-python-headless>=4.10,<5.0
+onnxruntime>=1.22,<2.0

@@ -11,6 +11,7 @@ MVP para relevar y visualizar el estado de calles con videos de recorridos. Extr
 - Esquema PostgreSQL/PostGIS, migración inicial e índices espaciales GiST.
 - Evidencias en Supabase Storage con enlaces firmados.
 - Modo de demostración con datos sintéticos claramente identificados, sin credenciales externas.
+- Análisis local de secuencias de fotos con un detector ONNX de daños viales, sin OpenAI ni Supabase.
 
 La cámara en vivo queda fuera del flujo obligatorio. El MVP prioriza la carga de un video corto o una secuencia de hasta 30 imágenes y permite adjuntar un track GPX o CSV. Sin GPS, las observaciones se guardan sin georreferenciar.
 
@@ -41,7 +42,7 @@ La cámara en vivo queda fuera del flujo obligatorio. El MVP prioriza la carga d
    npm run dev
    ```
 
-4. Abre [http://localhost:3000](http://localhost:3000). El modo de demostración usa datos sintéticos; no representa un análisis de cámara real.
+4. Abre [http://localhost:3000](http://localhost:3000). La demo incluye cinco fotos públicas de referencia con créditos en pantalla; sus clasificaciones son sintéticas. Para probar detección real, carga tus propias fotos: el backend descarga el modelo ONNX de CamThink al primer uso. El resultado local es visible y revisable, pero no se guarda en la base compartida ni se georreferencia sin un track GPS compatible. Los archivos y licencias de las fotos demo están listados en `frontend/public/demo-images/README.md`; la fuente y notas del modelo están en `backend/models/README.md`.
 
 ## Configurar Supabase y análisis real
 
@@ -56,6 +57,7 @@ La cámara en vivo queda fuera del flujo obligatorio. El MVP prioriza la carga d
 
 - Video: MP4, MOV, AVI, WEBM o M4V, hasta `MAX_VIDEO_MB`.
 - Imágenes: JPG, PNG o WEBP, hasta 30 archivos (12 MB por archivo). Para imágenes se usa el orden de carga y `FRAME_INTERVAL_SECONDS` como tiempo aproximado cuando no hay timestamps propios.
+- Análisis local de fotos: `POST /api/local-analysis/images`; límite total de 30 MB por solicitud. Detecta baches y varios tipos de grieta con el modelo local, estima severidad visual y devuelve evidencia. No persiste los resultados.
 - GPS: GPX con timestamps, o CSV con `latitude`, `longitude` y `elapsed_seconds`; también admite `timestamp`/`time` en lugar de tiempo relativo. Los puntos se asocian por tiempo, con interpolación únicamente entre puntos cercanos.
 - Muestreo de video: `FRAME_INTERVAL_SECONDS` (2 segundos por defecto).
 
@@ -72,6 +74,7 @@ Cada fotograma también conserva una clasificación general (`good`, `fair`, `po
 - `GET /api/health`, `GET /api/config`, `GET /api/demo`
 - `POST /api/sessions`, `GET /api/sessions`, `GET /api/sessions/{id}`
 - `POST /api/sessions/{id}/upload` (video y GPS opcional), `POST /api/sessions/{id}/images` (secuencia de imágenes y GPS opcional)
+- `POST /api/local-analysis/images` (análisis de fotos en memoria, sin credenciales externas)
 - `GET /api/defects` con filtros `session_id`, `review_status`, `defect_type` y `severity`
 - `GET /api/defects/{id}`, `PATCH /api/defects/{id}`
 
@@ -79,7 +82,8 @@ El análisis se procesa con una tarea simple del backend. El estado de sesión p
 
 ## Limitaciones conocidas
 
-- Sin las variables de Supabase y OpenAI, solo está disponible la demo sintética y rotulada.
+- Sin las variables de Supabase y OpenAI, la carga de video, georreferenciación y persistencia compartida no están disponibles; las fotos pueden analizarse localmente y los resultados viven en la sesión actual del navegador.
+- La geometría de calles de la ruta sintética de Buenos Aires se preparó con OSRM sobre datos de OpenStreetMap. El mapa muestra atribución a OpenStreetMap.
 - Los modelos multimodales pueden equivocarse en pavimentos, sombras y reflejos; se guarda su salida original y debe revisarse.
 - La geolocalización asociada al fotograma es aproximada. El GPS debe estar sincronizado temporalmente con el video.
 - La severidad visual no mide profundidad ni dimensiones reales. Una versión posterior podría incorporar calibración, acelerómetro, cámara estéreo o sensor de profundidad.

@@ -23,6 +23,11 @@ export interface ConditionPoint {
   is_synthetic?: boolean;
 }
 
+export interface RouteSegment {
+  road_condition: "good" | "fair" | "poor" | "not_assessable";
+  positions: [number, number][];
+}
+
 export interface Defect {
   id: string;
   session_id: string;
@@ -37,7 +42,10 @@ export interface Defect {
   latitude: number | null;
   longitude: number | null;
   evidence_url: string | null;
+  evidence_credit?: string;
+  evidence_source_url?: string;
   is_synthetic: boolean;
+  is_local?: boolean;
 }
 
 export interface ScanSession {
@@ -47,7 +55,9 @@ export interface ScanSession {
   started_at: string | null;
   finished_at: string | null;
   error_message: string | null;
+  is_local?: boolean;
   analysis_summary?: AnalysisSummary;
+  route_segments?: RouteSegment[];
   condition_points?: ConditionPoint[];
   defects: Defect[];
 }
@@ -60,6 +70,7 @@ export interface DemoResponse {
 
 export interface ConfigStatus {
   real_processing_ready: boolean;
+  local_processing_ready: boolean;
   missing_variables: string[];
   frame_interval_seconds: number;
   model: string | null;

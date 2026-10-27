@@ -133,6 +133,19 @@ export default function HomePage() {
     setBusy(true);
     setNotice(null);
     try {
+      if (images.length > 0 && !config?.real_processing_ready && config?.local_processing_ready) {
+        const localSession = await api.analyzeLocalImages(name.trim() || "Secuencia de imágenes", images);
+        setSessions((current) => [localSession, ...current]);
+        setActiveId(localSession.id);
+        setSelectedId(localSession.defects[0]?.id ?? null);
+        setSynthetic(false);
+        setImages([]);
+        setNotice({
+          text: `Análisis local listo: ${localSession.analysis_summary?.frames_total ?? images.length} fotos procesadas y ${localSession.defects.length} detecciones. Los resultados locales no se guardan en la base compartida.`,
+          kind: "success",
+        });
+        return;
+      }
       const session = await api.createSession(name.trim() || video?.name || "Secuencia de imágenes");
       setSynthetic(false);
       setSessions((current) => [session, ...current]);
@@ -160,6 +173,10 @@ export default function HomePage() {
   }
 
   async function refreshAll() {
+    if (activeSession?.is_local) {
+      setNotice({ text: "Este análisis se mantiene en esta sesión del navegador; vuelve a cargar las fotos para regenerarlo.", kind: "info" });
+      return;
+    }
     if (synthetic) {
       await loadDemo();
       return;
@@ -179,7 +196,7 @@ export default function HomePage() {
   }
 
   async function changeReviewStatus(defect: Defect, review_status: ReviewStatus) {
-    if (defect.is_synthetic) {
+    if (defect.is_synthetic || defect.is_local) {
       setSessions((current) => current.map((session) => ({
         ...session,
         defects: session.defects.map((item) => item.id === defect.id ? { ...item, review_status } : item),
@@ -218,12 +235,12 @@ export default function HomePage() {
       updates.latitude = latitude;
       updates.longitude = longitude;
     }
-    if (defect.is_synthetic) {
+    if (defect.is_synthetic || defect.is_local) {
       setSessions((current) => current.map((session) => ({
         ...session,
         defects: session.defects.map((item) => item.id === defect.id ? { ...item, ...updates } : item),
       })));
-      setNotice({ text: "Cambios aplicados solo a esta demostración sintética.", kind: "info" });
+      setNotice({ text: defect.is_local ? "Corrección aplicada a este análisis local del navegador." : "Cambios aplicados solo a esta demostración sintética.", kind: "info" });
       return;
     }
     try {
@@ -243,7 +260,7 @@ export default function HomePage() {
       <header className="topbar">
         <div className="brand"><div className="brand-mark"><Road size={19} strokeWidth={2.3} /></div><span>VialScan</span></div>
         <div className="topbar-right">
-          <div className="system-state"><span className={`status-dot ${synthetic ? "demo" : ""}`} /><span className="system-label">{synthetic ? "Modo demostración" : "Datos del recorrido"}</span></div>
+          <div className="system-state"><span className={`status-dot ${synthetic || activeSession?.is_local ? "demo" : ""}`} /><span className="system-label">{activeSession?.is_local ? "Análisis local" : synthetic ? "Modo demostración" : "Datos del recorrido"}</span></div>
           <button className="button" onClick={refreshAll} aria-label="Actualizar"><RefreshCw size={14} />Actualizar</button>
         </div>
       </header>
@@ -298,7 +315,7 @@ export default function HomePage() {
             </div>
             <div className="map-shell">
               {loading ? <div className="map-canvas grid place-items-center text-sm text-slate-500">Preparando mapa…</div>
-                : <RoadMap defects={visibleDefects} conditionPoints={activeSession?.condition_points ?? []} selectedId={selected?.id ?? null} onSelect={setSelectedId} />}
+                : <RoadMap defects={visibleDefects} conditionPoints={activeSession?.condition_points ?? []} routeSegments={activeSession?.route_segments ?? []} selectedId={selected?.id ?? null} onSelect={setSelectedId} />}
               {synthetic && <div className="map-label">RECORRIDO SINTÉTICO · UBICACIONES DE EJEMPLO</div>}
               <div className="map-legend">
                 <span className="legend-item"><i className="legend-dot" style={{ background: CONDITION_COLORS.good }} />Buen estado</span>
@@ -342,6 +359,7 @@ export default function HomePage() {
                       <span className={`chip ${item.severity_estimated}`}>{SEVERITY_LABELS[item.severity_estimated]}</span>
                       <span className={`chip ${item.review_status === "confirmed" ? "confirmed" : ""}`}>{STATUS_LABELS[item.review_status]}</span>
                       {item.is_synthetic && <span className="chip synthetic">Sintético</span>}
+                      {item.is_local && <span className="chip local">Detector local</span>}
                     </span>
                   </span>
                   <ArrowUpRight size={14} className="mt-1 text-slate-400" />
@@ -350,9 +368,10 @@ export default function HomePage() {
             </div>
             {selected && <div className="detail">
               <div className="detail-top"><div className="detail-title">Detalle de observación</div><span className="chip">{Math.round(selected.confidence * 100)}% confianza visual</span></div>
-              {selected.evidence_url ? <img className="evidence" src={selected.evidence_url} alt="Fotograma usado como evidencia" /> : (
+              {selected.evidence_url ? <img className="evidence" src={selected.evidence_url} alt={selected.is_synthetic ? "Foto pública de referencia" : "Fotograma usado como evidencia"} /> : (
                 <div className="rounded-lg border border-dashed border-slate-200 bg-white p-3 text-[10px] leading-5 text-slate-500">{selected.is_synthetic ? "Evidencia ilustrativa no adjunta en esta demo." : "No hay imagen de evidencia disponible."}</div>
               )}
+              {selected.is_synthetic && selected.evidence_url && <p className="text-[9px] leading-4 text-slate-500 mt-1">Foto de referencia pública{selected.evidence_source_url && selected.evidence_credit ? <> · <a href={selected.evidence_source_url} target="_blank" rel="noreferrer" className="underline">{selected.evidence_credit}</a></> : null}. La clasificación es sintética; esta foto no se analizó en vivo.</p>}
               <p className="text-[11px] leading-5 text-slate-600 mt-2">{selected.description}</p>
               <div className="detail-meta">
                 <div><span>Ubicación</span><strong>{selected.latitude !== null ? `${selected.latitude.toFixed(5)}, ${selected.longitude?.toFixed(5)}` : "Sin georreferenciar"}</strong></div>
@@ -390,7 +409,7 @@ export default function HomePage() {
           <div>
             <div className="upload-copy"><span className="upload-icon"><CloudUpload size={19} /></span><span><span className="upload-title">Analizar un nuevo recorrido</span><span className="upload-text block">Carga un video corto o una secuencia de imágenes, y opcionalmente el track GPS GPX/CSV.</span></span></div>
             {notice && <div className={`notice ${notice.kind === "error" ? "error" : notice.kind === "success" ? "success" : ""}`}>{notice.text}</div>}
-            {config && !config.real_processing_ready && <div className="notice">Para procesar videos reales faltan: {config.missing_variables.join(", ")}. Puedes recorrer la interfaz en modo sintético.</div>}
+            {config && !config.real_processing_ready && <div className="notice">Las fotos que selecciones sí se analizan con un detector local. El video, el GPS, el guardado compartido y el procesamiento remoto requieren configurar {config.missing_variables.join(", ")} en <code>.env</code>. Las fotos ilustrativas de la demo no se analizan.</div>}
             {activeSession?.status === "failed" && activeSession.error_message && <div className="notice error">{activeSession.error_message}</div>}
           </div>
           <div className="upload-controls">
@@ -398,8 +417,8 @@ export default function HomePage() {
             <label className="file-input"><FileVideo2 size={14} className="inline mr-1" /><input type="file" accept="video/*,.mp4,.mov,.avi,.webm,.m4v" onChange={(event) => { setVideo(event.target.files?.[0] ?? null); setImages([]); }} /></label>
             <label className="file-input"><Sparkles size={14} className="inline mr-1" /><input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => { setImages(Array.from(event.target.files ?? [])); setVideo(null); }} /></label>
             <label className="file-input"><MapPin size={14} className="inline mr-1" /><input type="file" accept=".gpx,.csv" onChange={(event) => setGps(event.target.files?.[0] ?? null)} /></label>
-            <button className="button primary" type="submit" disabled={!config?.real_processing_ready || (!video && images.length === 0) || busy}>
-              {busy ? <><LoaderCircle size={14} className="spin" />Procesando</> : <><Sparkles size={14} />Analizar</>}
+            <button className="button primary" type="submit" disabled={(!config?.real_processing_ready && !(config?.local_processing_ready && images.length > 0)) || (!video && images.length === 0) || busy}>
+              {busy ? <><LoaderCircle size={14} className="spin" />Procesando</> : <><Sparkles size={14} />{images.length > 0 && !config?.real_processing_ready ? "Analizar fotos" : "Analizar"}</>}
             </button>
           </div>
         </form>

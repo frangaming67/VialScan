@@ -84,6 +84,7 @@ h1 { font-size: clamp(28px, 3.4vw, 42px); line-height: 1.05; letter-spacing: -.0
 .chip.medium { background: #fff5e7; color: #a87527; }
 .chip.confirmed { color: #357c5d; background: #eaf5ee; }
 .chip.synthetic { color: #87652e; background: #fff5df; }
+.chip.local { color: #37657d; background: #eaf5fa; }
 .empty-state { min-height: 220px; display: grid; place-items: center; text-align: center; color: var(--muted); font-size: 12px; padding: 24px; }
 .detail { margin-top: auto; border-top: 1px solid var(--line); padding: 15px 17px 17px; background: #fbfcfb; }
 .detail-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }

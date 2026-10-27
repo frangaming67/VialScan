@@ -1,7 +1,8 @@
 "use client";
 
-import { CircleMarker, MapContainer, Polyline, Popup, TileLayer, ZoomControl } from "react-leaflet";
-import type { ConditionPoint, Defect } from "@/lib/types";
+import { useMemo, useEffect } from "react";
+import { CircleMarker, MapContainer, Polyline, Popup, TileLayer, ZoomControl, useMap } from "react-leaflet";
+import type { ConditionPoint, Defect, RouteSegment } from "@/lib/types";
 
 const COLORS: Record<string, string> = {
   high: "#e15d4f",
@@ -16,9 +17,18 @@ const CONDITION_COLORS: Record<string, string> = {
   not_assessable: "#9aa7a9",
 };
 
-export default function RoadMap({ defects, conditionPoints, selectedId, onSelect }: {
+function FitRoadToBounds({ positions }: { positions: [number, number][] }) {
+  const map = useMap();
+  useEffect(() => {
+    if (positions.length > 1) map.fitBounds(positions, { padding: [24, 24], maxZoom: 16, animate: false });
+  }, [map, positions]);
+  return null;
+}
+
+export default function RoadMap({ defects, conditionPoints, routeSegments = [], selectedId, onSelect }: {
   defects: Defect[];
   conditionPoints: ConditionPoint[];
+  routeSegments?: RouteSegment[];
   selectedId: string | null;
   onSelect: (id: string) => void;
 }) {
@@ -39,19 +49,28 @@ export default function RoadMap({ defects, conditionPoints, selectedId, onSelect
   const locatedDefects = defects.filter((item) => item.latitude !== null && item.longitude !== null);
   const center: [number, number] = locatedConditionPoints[0]?.position
     ?? (locatedDefects[0] ? [locatedDefects[0].latitude as number, locatedDefects[0].longitude as number] : [-34.6038, -58.3816]);
+  const displaySegments = routeSegments.length ? routeSegments : conditionSegments;
+  const boundsPositions = useMemo(() => {
+    const routePositions = routeSegments.flatMap((segment) => segment.positions);
+    if (routePositions.length > 1) return routePositions;
+    return conditionPoints.flatMap((item) => item.latitude !== null && item.longitude !== null
+      ? [[item.latitude, item.longitude] as [number, number]]
+      : []);
+  }, [routeSegments, conditionPoints]);
 
   return (
-    <MapContainer center={center} zoom={16} zoomControl={false} scrollWheelZoom className="map-canvas">
+    <MapContainer center={center} zoom={routeSegments.length ? 15 : 16} zoomControl={false} scrollWheelZoom className="map-canvas">
+      <FitRoadToBounds positions={boundsPositions} />
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
       <ZoomControl position="bottomright" />
-      {conditionSegments.length ? conditionSegments.map((segment) => (
+      {displaySegments.length ? displaySegments.map((segment, index) => (
         <Polyline
-          key={segment.key}
+          key={"key" in segment ? segment.key : `route-${index}`}
           positions={segment.positions}
-          pathOptions={{ color: CONDITION_COLORS[segment.road_condition] ?? CONDITION_COLORS.not_assessable, weight: 7, opacity: 0.82 }}
+          pathOptions={{ color: CONDITION_COLORS[segment.road_condition] ?? CONDITION_COLORS.not_assessable, weight: 7, opacity: 0.88, lineCap: "round", lineJoin: "round" }}
         />
       )) : locatedDefects.length > 1 && (
         <Polyline positions={locatedDefects.map((item) => [item.latitude as number, item.longitude as number])} pathOptions={{ color: "#315d76", weight: 5, opacity: 0.7 }} />
