@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import logging
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
@@ -21,6 +22,8 @@ from .schemas import ConditionPointOut, DefectOut, DefectUpdate, SessionCreate, 
 from .services.processor import process_session
 from .services.storage import signed_url, upload_object
 from .services.local_analyzer import analyze_local_image
+from .services.gps import GPSPoint, location_for_time, parse_gps
+from .services.video import extract_frames, video_duration
 
 logging.basicConfig(level=logging.INFO)
 app = FastAPI(title=settings.app_name, version="0.1.0")
@@ -163,44 +166,26 @@ def demo_data() -> dict:
     return DEMO
 
 
-@app.post("/api/local-analysis/images")
-async def analyze_images_locally(
-    images: Annotated[list[UploadFile], File()],
-    name: Annotated[str, Form()] = "Análisis local de fotos",
-) -> dict:
-    if not images or len(images) > 30:
-        raise HTTPException(status_code=400, detail="Carga entre 1 y 30 imágenes.")
-    if any(Path(item.filename or "").suffix.lower() not in IMAGE_SUFFIXES for item in images):
-        raise HTTPException(status_code=415, detail="Usa imágenes JPG, PNG o WEBP.")
-
+def _local_analysis_result(name: str, frames: list[dict], gps_points: list[GPSPoint]) -> dict:
     session_id = uuid4()
     started_at = datetime.now(timezone.utc)
     defects = []
     condition_points = []
+    image_results = []
     category_counts: dict[str, int] = {}
     severity_counts: dict[str, int] = {}
     condition_counts = {"good": 0, "fair": 0, "poor": 0, "not_assessable": 0}
-    total_image_bytes = 0
 
-    for index, upload in enumerate(images):
-        image_bytes = await upload.read(12 * 1024 * 1024 + 1)
-        if len(image_bytes) > 12 * 1024 * 1024:
-            raise HTTPException(status_code=413, detail=f"{upload.filename or 'Una imagen'} supera el límite de 12 MB.")
-        total_image_bytes += len(image_bytes)
-        if total_image_bytes > 30 * 1024 * 1024:
-            raise HTTPException(status_code=413, detail="La secuencia completa supera el límite de 30 MB.")
-        if not image_bytes:
-            raise HTTPException(status_code=400, detail=f"{upload.filename or 'Una imagen'} está vacía.")
-        try:
-            result = await asyncio.to_thread(analyze_local_image, image_bytes)
-        except ValueError as error:
-            raise HTTPException(status_code=400, detail=str(error)) from error
-        except RuntimeError as error:
-            raise HTTPException(status_code=503, detail=str(error)) from error
-
+    for frame in frames:
         frame_id = uuid4()
-        elapsed_seconds = index * settings.frame_interval_seconds
+        elapsed_seconds = frame["elapsed_seconds"]
+        result = frame["result"]
         condition = result["road_condition"]
+        latitude, longitude, matched_point = location_for_time(
+            gps_points, elapsed_seconds, settings.gps_max_gap_seconds,
+            settings.gps_interpolation_max_gap_seconds,
+        )
+        detections = result["detections"]
         condition_counts[condition] += 1
         condition_points.append({
             "frame_id": str(frame_id),
@@ -208,39 +193,62 @@ async def analyze_images_locally(
             "road_condition": condition,
             "confidence": result["frame_confidence"],
             "summary": result["summary"],
-            "latitude": None,
-            "longitude": None,
+            "latitude": latitude if matched_point else None,
+            "longitude": longitude if matched_point else None,
             "is_synthetic": False,
         })
-        for detection in result["detections"]:
-            defect_id = uuid4()
+        image_results.append({
+            "frame_id": str(frame_id),
+            "file_name": frame["file_name"],
+            "evidence_url": result["evidence_url"],
+            "road_condition": condition,
+            "confidence": result["frame_confidence"],
+            "summary": result["summary"],
+            "defect_count": len(detections),
+        })
+
+        for detection in detections:
             defect_type = detection["defect_type"]
             severity = detection["severity_estimated"]
             category_counts[defect_type] = category_counts.get(defect_type, 0) + 1
             severity_counts[severity] = severity_counts.get(severity, 0) + 1
             defects.append({
-                "id": str(defect_id),
+                "id": str(uuid4()),
                 "session_id": str(session_id),
+                "frame_id": str(frame_id),
                 "defect_type": defect_type,
                 "severity_estimated": severity,
                 "severity_score": detection["severity_score"],
+                "bbox_approx": detection["bbox_approx"],
                 "review_status": "pending",
-                "description": f"{upload.filename or 'Foto'}: {detection['description']}",
+                "description": f"{frame['file_name']}: {detection['description']}",
                 "first_observed_at": elapsed_seconds,
                 "last_observed_at": elapsed_seconds,
                 "confidence": detection["confidence"],
-                "latitude": None,
-                "longitude": None,
-                "evidence_url": result["evidence_url"],
+                "latitude": latitude if matched_point else None,
+                "longitude": longitude if matched_point else None,
+                "evidence_url": None,
                 "is_synthetic": False,
                 "is_local": True,
             })
 
+    if len(gps_points) > 1:
+        stride = max(1, (len(gps_points) + 1499) // 1500)
+        route = gps_points[::stride]
+        if route[-1] is not gps_points[-1]:
+            route.append(gps_points[-1])
+        route_segments = [{
+            "road_condition": "not_assessable",
+            "positions": [[point.latitude, point.longitude] for point in route],
+        }]
+    else:
+        route_segments = []
+
+    frames_total = len(frames)
     finished_at = datetime.now(timezone.utc)
-    frames_total = len(images)
     return {
         "id": str(session_id),
-        "name": name.strip() or "Análisis local de fotos",
+        "name": name.strip() or "Recorrido local",
         "status": "completed",
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),
@@ -255,9 +263,104 @@ async def analyze_images_locally(
             "category_counts": category_counts,
             "severity_counts": severity_counts,
         },
+        "route_segments": route_segments,
         "condition_points": condition_points,
+        "image_results": image_results,
         "defects": defects,
     }
+
+
+async def _load_local_gps(gps: UploadFile | None, directory: Path) -> list[GPSPoint]:
+    if not gps:
+        return []
+    suffix = Path(gps.filename or "").suffix.lower()
+    if suffix not in GPS_SUFFIXES:
+        raise HTTPException(status_code=415, detail="El archivo GPS debe ser GPX o CSV.")
+    path = directory / f"route{suffix}"
+    await _save_upload(gps, path, 10 * 1024 * 1024)
+    try:
+        return parse_gps(path)
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=f"No se pudo leer el track GPS: {error}") from error
+
+
+@app.post("/api/local-analysis/images")
+async def analyze_images_locally(
+    images: Annotated[list[UploadFile] | None, File()] = None,
+    gps: Annotated[UploadFile | None, File()] = None,
+    name: Annotated[str, Form()] = "Secuencia de imágenes",
+) -> dict:
+    if not images or len(images) > 30:
+        raise HTTPException(status_code=400, detail="Carga entre 1 y 30 imágenes.")
+    if any(Path(item.filename or "").suffix.lower() not in IMAGE_SUFFIXES for item in images):
+        raise HTTPException(status_code=415, detail="Usa imágenes JPG, PNG o WEBP.")
+
+    frames = []
+    total_image_bytes = 0
+    with tempfile.TemporaryDirectory(prefix="vialscan-local-") as temporary:
+        gps_points = await _load_local_gps(gps, Path(temporary))
+        for index, upload in enumerate(images):
+            image_bytes = await upload.read(12 * 1024 * 1024 + 1)
+            if len(image_bytes) > 12 * 1024 * 1024:
+                raise HTTPException(status_code=413, detail=f"{upload.filename or 'Una imagen'} supera el límite de 12 MB.")
+            total_image_bytes += len(image_bytes)
+            if total_image_bytes > 30 * 1024 * 1024:
+                raise HTTPException(status_code=413, detail="La secuencia completa supera el límite de 30 MB.")
+            if not image_bytes:
+                raise HTTPException(status_code=400, detail=f"{upload.filename or 'Una imagen'} está vacía.")
+            try:
+                result = await asyncio.to_thread(analyze_local_image, image_bytes)
+            except ValueError as error:
+                raise HTTPException(status_code=400, detail=str(error)) from error
+            except RuntimeError as error:
+                raise HTTPException(status_code=503, detail=str(error)) from error
+            frames.append({
+                "file_name": Path(upload.filename or f"foto-{index + 1}.jpg").name,
+                "elapsed_seconds": index * settings.frame_interval_seconds,
+                "result": result,
+            })
+    return _local_analysis_result(name, frames, gps_points)
+
+
+@app.post("/api/local-analysis/video")
+async def analyze_video_locally(
+    video: Annotated[UploadFile, File()],
+    gps: Annotated[UploadFile | None, File()] = None,
+    name: Annotated[str, Form()] = "Video de recorrido",
+) -> dict:
+    suffix = Path(video.filename or "").suffix.lower()
+    if suffix not in VIDEO_SUFFIXES:
+        raise HTTPException(status_code=415, detail="Usa un video MP4, MOV, AVI, WEBM o M4V.")
+
+    with tempfile.TemporaryDirectory(prefix="vialscan-video-") as temporary:
+        directory = Path(temporary)
+        video_path = directory / f"source{suffix}"
+        await _save_upload(video, video_path, settings.max_video_mb * 1024 * 1024)
+        gps_points = await _load_local_gps(gps, directory)
+        try:
+            duration = await asyncio.to_thread(video_duration, video_path)
+            if duration > 180:
+                raise HTTPException(status_code=413, detail="Para análisis local, el video debe durar 3 minutos o menos.")
+            extracted, _ = await asyncio.to_thread(
+                extract_frames, video_path, directory / "frames", settings.frame_interval_seconds,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+        frames = []
+        for elapsed, frame_path in extracted:
+            try:
+                result = await asyncio.to_thread(analyze_local_image, frame_path.read_bytes())
+            except ValueError as error:
+                raise HTTPException(status_code=400, detail=str(error)) from error
+            except RuntimeError as error:
+                raise HTTPException(status_code=503, detail=str(error)) from error
+            frames.append({
+                "file_name": f"{Path(video.filename or 'video').name} · {int(elapsed // 60):02d}:{int(elapsed % 60):02d}",
+                "elapsed_seconds": elapsed,
+                "result": result,
+            })
+    return _local_analysis_result(name, frames, gps_points)
 
 
 @app.post("/api/sessions", response_model=SessionOut)

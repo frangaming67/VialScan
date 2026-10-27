@@ -7,6 +7,7 @@ import {
   LoaderCircle, MapPin, RefreshCw, Road, ShieldCheck, Sparkles, X,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { loadLocalSessions, saveLocalSession } from "@/lib/local-sessions";
 import type { ConfigStatus, Defect, DefectType, ReviewStatus, ScanSession, Severity } from "@/lib/types";
 
 const RoadMap = dynamic(() => import("@/components/road-map"), {
@@ -62,10 +63,13 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
 
   const loadDemo = useCallback(async () => {
-    const demo = await api.demo();
-    setSessions(demo.sessions);
-    setActiveId(demo.sessions[0]?.id ?? null);
-    setSelectedId(demo.sessions[0]?.defects[0]?.id ?? null);
+    const [demo, localSessions] = await Promise.all([
+      api.demo(), loadLocalSessions().catch(() => []),
+    ]);
+    const combined = [...localSessions, ...demo.sessions];
+    setSessions(combined);
+    setActiveId(demo.sessions[0]?.id ?? localSessions[0]?.id ?? null);
+    setSelectedId(demo.sessions[0]?.defects[0]?.id ?? localSessions[0]?.defects[0]?.id ?? null);
     setSynthetic(true);
     setNotice(null);
   }, []);
@@ -78,17 +82,19 @@ export default function HomePage() {
 
   useEffect(() => {
     let alive = true;
-    Promise.all([api.config(), api.demo()]).then(async ([state, demo]) => {
+    Promise.all([api.config(), api.demo(), loadLocalSessions().catch(() => [])]).then(async ([state, demo, localSessions]) => {
       if (!alive) return;
       setConfig(state);
-      setSessions(demo.sessions);
-      setActiveId(demo.sessions[0]?.id ?? null);
-      setSelectedId(demo.sessions[0]?.defects[0]?.id ?? null);
+      const combined = [...localSessions, ...demo.sessions];
+      setSessions(combined);
+      setActiveId(combined[0]?.id ?? null);
+      setSelectedId(combined[0]?.defects[0]?.id ?? null);
+      setSynthetic(localSessions.length === 0);
       if (state.real_processing_ready) {
         try {
           const saved = await api.sessions();
           if (alive && saved.length) {
-            setSessions(saved);
+            setSessions([...localSessions, ...saved]);
             setActiveId(saved[0].id);
             setSelectedId(saved[0].defects[0]?.id ?? null);
             setSynthetic(false);
@@ -112,6 +118,10 @@ export default function HomePage() {
       && (statusFilter === "all" || item.review_status === statusFilter);
   }), [allDefects, typeFilter, severityFilter, statusFilter]);
   const selected = allDefects.find((item) => item.id === selectedId) ?? visibleDefects[0] ?? null;
+  const selectedFrame = selected?.frame_id
+    ? activeSession?.image_results?.find((frame) => frame.frame_id === selected.frame_id)
+    : undefined;
+  const selectedEvidenceUrl = selected?.evidence_url ?? selectedFrame?.evidence_url ?? null;
 
   useEffect(() => {
     if (!selected) return;
@@ -132,15 +142,20 @@ export default function HomePage() {
     setBusy(true);
     setNotice(null);
     try {
-      if (images.length > 0 && !config?.real_processing_ready && config?.local_processing_ready) {
-        const localSession = await api.analyzeLocalImages(name.trim() || "Secuencia de imágenes", images);
+      if (!config?.real_processing_ready && config?.local_processing_ready) {
+        const localSession = images.length > 0
+          ? await api.analyzeLocalImages(name.trim() || "Secuencia de imágenes", images, gps ?? undefined)
+          : await api.analyzeLocalVideo(name.trim() || video?.name || "Video de recorrido", video!, gps ?? undefined);
+        await saveLocalSession(localSession);
         setSessions((current) => [localSession, ...current]);
         setActiveId(localSession.id);
         setSelectedId(localSession.defects[0]?.id ?? null);
         setSynthetic(false);
         setImages([]);
+        setVideo(null);
+        setGps(null);
         setNotice({
-          text: `Análisis local listo: ${localSession.analysis_summary?.frames_total ?? images.length} fotos procesadas y ${localSession.defects.length} detecciones. Los resultados locales no se guardan en la base compartida.`,
+          text: `Análisis local listo: ${localSession.analysis_summary?.frames_total ?? 0} fotogramas procesados, ${localSession.defects.length} detecciones. Se conserva en este navegador.`,
           kind: "success",
         });
         return;
@@ -173,7 +188,15 @@ export default function HomePage() {
 
   async function refreshAll() {
     if (activeSession?.is_local) {
-      setNotice({ text: "Este análisis se mantiene en esta sesión del navegador; vuelve a cargar las fotos para regenerarlo.", kind: "info" });
+      try {
+        const localSessions = await loadLocalSessions();
+        setSessions((current) => [...localSessions, ...current.filter((item) => !item.is_local)]);
+        const refreshed = localSessions.find((item) => item.id === activeId);
+        if (refreshed) setSelectedId(refreshed.defects[0]?.id ?? null);
+        setNotice({ text: refreshed ? "Análisis local actualizado desde este navegador." : "No se encontró el análisis local guardado.", kind: refreshed ? "success" : "info" });
+      } catch (error) {
+        setNotice({ text: error instanceof Error ? error.message : "No se pudo leer el almacenamiento local.", kind: "error" });
+      }
       return;
     }
     if (synthetic) {
@@ -196,10 +219,16 @@ export default function HomePage() {
 
   async function changeReviewStatus(defect: Defect, review_status: ReviewStatus) {
     if (defect.is_synthetic || defect.is_local) {
+      const session = sessions.find((item) => item.id === defect.session_id);
+      const updatedSession = session ? {
+        ...session,
+        defects: session.defects.map((item) => item.id === defect.id ? { ...item, review_status } : item),
+      } : null;
       setSessions((current) => current.map((session) => ({
         ...session,
         defects: session.defects.map((item) => item.id === defect.id ? { ...item, review_status } : item),
       })));
+      if (updatedSession?.is_local) await saveLocalSession(updatedSession);
       return;
     }
     try {
@@ -235,10 +264,16 @@ export default function HomePage() {
       updates.longitude = longitude;
     }
     if (defect.is_synthetic || defect.is_local) {
+      const session = sessions.find((item) => item.id === defect.session_id);
+      const updatedSession = session ? {
+        ...session,
+        defects: session.defects.map((item) => item.id === defect.id ? { ...item, ...updates } : item),
+      } : null;
       setSessions((current) => current.map((session) => ({
         ...session,
         defects: session.defects.map((item) => item.id === defect.id ? { ...item, ...updates } : item),
       })));
+      if (updatedSession?.is_local) await saveLocalSession(updatedSession);
       setNotice({ text: defect.is_local ? "Corrección aplicada a este análisis local del navegador." : "Cambios aplicados solo a esta demostración sintética.", kind: "info" });
       return;
     }
@@ -306,6 +341,18 @@ export default function HomePage() {
           </div>
         </section>
 
+        {activeSession?.image_results?.length ? <section className="panel frame-gallery-panel">
+          <div className="panel-head"><div><div className="panel-title">Fotogramas analizados</div><div className="panel-caption">Evidencia de todas las imágenes, incluso las que no tuvieron detecciones</div></div><span className="chip">{activeSession.image_results.length} imágenes</span></div>
+          <div className="frame-gallery">{activeSession.image_results.map((frame) => {
+            const frameDefect = activeSession.defects.find((item) => item.frame_id === frame.frame_id);
+            return <button type="button" className="frame-card" key={frame.frame_id} onClick={() => setSelectedId(frameDefect?.id ?? null)}>
+              <img src={frame.evidence_url} alt={`Fotograma ${frame.file_name}`} loading="lazy" />
+              <span className="frame-card-name" title={frame.file_name}>{frame.file_name}</span>
+              <span className="frame-card-meta">{CONDITION_LABELS[frame.road_condition]} · {frame.defect_count} {frame.defect_count === 1 ? "detección" : "detecciones"}</span>
+            </button>;
+          })}</div>
+        </section> : null}
+
         <section className="workspace-grid">
           <div className="panel map-panel">
             <div className="panel-head">
@@ -367,7 +414,7 @@ export default function HomePage() {
             </div>
             {selected && <div className="detail">
               <div className="detail-top"><div className="detail-title">Detalle de observación</div><span className="chip">{Math.round(selected.confidence * 100)}% confianza visual</span></div>
-              {selected.evidence_url ? <img className="evidence" src={selected.evidence_url} alt={selected.is_synthetic ? "Foto pública de referencia" : "Fotograma usado como evidencia"} /> : (
+              {selectedEvidenceUrl ? <img className="evidence" src={selectedEvidenceUrl} alt={selected.is_synthetic ? "Foto pública de referencia" : "Fotograma usado como evidencia"} /> : (
                 <div className="rounded-lg border border-dashed border-slate-200 bg-white p-3 text-[10px] leading-5 text-slate-500">{selected.is_synthetic ? "Evidencia ilustrativa no adjunta en esta demo." : "No hay imagen de evidencia disponible."}</div>
               )}
               {selected.is_synthetic && selected.evidence_url && <p className="text-[9px] leading-4 text-slate-500 mt-1">Foto de referencia pública{selected.evidence_source_url && selected.evidence_credit ? <> · <a href={selected.evidence_source_url} target="_blank" rel="noreferrer" className="underline">{selected.evidence_credit}</a></> : null}. La clasificación es sintética; esta foto no se analizó en vivo.</p>}
@@ -415,8 +462,8 @@ export default function HomePage() {
             <label className="file-input"><FileVideo2 size={14} className="inline mr-1" /><input type="file" accept="video/*,.mp4,.mov,.avi,.webm,.m4v" onChange={(event) => { setVideo(event.target.files?.[0] ?? null); setImages([]); }} /></label>
             <label className="file-input"><Sparkles size={14} className="inline mr-1" /><input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => { setImages(Array.from(event.target.files ?? [])); setVideo(null); }} /></label>
             <label className="file-input"><MapPin size={14} className="inline mr-1" /><input type="file" accept=".gpx,.csv" onChange={(event) => setGps(event.target.files?.[0] ?? null)} /></label>
-            <button className="button primary" type="submit" disabled={(!config?.real_processing_ready && !(config?.local_processing_ready && images.length > 0)) || (!video && images.length === 0) || busy}>
-              {busy ? <><LoaderCircle size={14} className="spin" />Procesando</> : <><Sparkles size={14} />{images.length > 0 && !config?.real_processing_ready ? "Analizar fotos" : "Analizar"}</>}
+            <button className="button primary" type="submit" disabled={(!config?.real_processing_ready && !config?.local_processing_ready) || (!video && images.length === 0) || busy}>
+              {busy ? <><LoaderCircle size={14} className="spin" />Procesando</> : <><Sparkles size={14} />{!config?.real_processing_ready ? "Analizar localmente" : "Analizar"}</>}
             </button>
           </div>
         </form>

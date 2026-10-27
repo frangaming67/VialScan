@@ -32,11 +32,19 @@ export const api = {
     if (gps) body.append("gps", gps);
     return request<{ id: string; status: string; message: string }>(`/api/sessions/${id}/images`, { method: "POST", body });
   },
-  analyzeLocalImages: (name: string, images: File[]) => {
+  analyzeLocalImages: (name: string, images: File[], gps?: File) => {
     const body = new FormData();
     body.append("name", name);
     images.forEach((image) => body.append("images", image));
+    if (gps) body.append("gps", gps);
     return request<ScanSession>("/api/local-analysis/images", { method: "POST", body });
+  },
+  analyzeLocalVideo: (name: string, video: File, gps?: File) => {
+    const body = new FormData();
+    body.append("name", name);
+    body.append("video", video);
+    if (gps) body.append("gps", gps);
+    return request<ScanSession>("/api/local-analysis/video", { method: "POST", body });
   },
   updateDefect: (id: string, updates: Partial<Pick<Defect, "review_status" | "defect_type" | "severity_estimated" | "latitude" | "longitude">>) =>
     request<Defect>(`/api/defects/${id}`, {

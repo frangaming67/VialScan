@@ -52,6 +52,13 @@ h1 { font-size: clamp(28px, 3.4vw, 42px); line-height: 1.05; letter-spacing: -.0
 .condition-label small { color: var(--muted); font-weight: 500; }
 .condition-track { height: 6px; width: 100%; border-radius: 99px; background: #edf0ef; overflow: hidden; }
 .condition-fill { height: 100%; border-radius: 99px; transition: width .2s ease; }
+.frame-gallery-panel { margin-bottom: 16px; }
+.frame-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; padding: 14px 16px 16px; max-height: 350px; overflow: auto; }
+.frame-card { min-width: 0; overflow: hidden; display: flex; flex-direction: column; gap: 6px; padding: 7px; text-align: left; border: 1px solid var(--line); border-radius: 10px; background: #fff; transition: border-color .15s ease, transform .15s ease; }
+.frame-card:hover { border-color: #9abbb2; transform: translateY(-1px); }
+.frame-card img { display: block; width: 100%; height: 100px; object-fit: cover; border-radius: 6px; background: #edf1ef; }
+.frame-card-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 700; color: var(--ink); }
+.frame-card-meta { font-size: 9px; color: var(--muted); }
 .workspace-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(340px, .85fr); gap: 16px; align-items: stretch; }
 .panel { background: #fff; border: 1px solid var(--line); border-radius: 15px; overflow: hidden; }
 .map-panel { min-height: 602px; display: flex; flex-direction: column; }
@@ -132,6 +139,8 @@ h1 { font-size: clamp(28px, 3.4vw, 42px); line-height: 1.05; letter-spacing: -.0
   .metric-value { font-size: 22px; }
   .map-shell { height: 380px; }
   .condition-grid { grid-template-columns: repeat(2, 1fr); gap: 13px; }
+  .frame-gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 300px; padding: 10px; }
+  .frame-card img { height: 90px; }
   .map-legend { gap: 7px; font-size: 9px; }
   .panel-head { align-items: flex-start; flex-direction: column; }
   .detail-actions { flex-wrap: wrap; }

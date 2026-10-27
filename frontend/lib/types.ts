@@ -42,10 +42,22 @@ export interface Defect {
   latitude: number | null;
   longitude: number | null;
   evidence_url: string | null;
+  frame_id?: string;
+  bbox_approx?: [number, number, number, number];
   evidence_credit?: string;
   evidence_source_url?: string;
   is_synthetic: boolean;
   is_local?: boolean;
+}
+
+export interface ImageAnalysisResult {
+  frame_id: string;
+  file_name: string;
+  evidence_url: string;
+  road_condition: "good" | "fair" | "poor" | "not_assessable";
+  confidence: number;
+  summary: string;
+  defect_count: number;
 }
 
 export interface ScanSession {
@@ -59,6 +71,7 @@ export interface ScanSession {
   analysis_summary?: AnalysisSummary;
   route_segments?: RouteSegment[];
   condition_points?: ConditionPoint[];
+  image_results?: ImageAnalysisResult[];
   defects: Defect[];
 }
 
