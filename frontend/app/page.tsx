@@ -1,7 +1,8 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
+import { useCallback, useEffect, useState } from "react";
 import {
   Activity, AlertTriangle, ArrowUpRight, Check, Clock3, CloudUpload, FileVideo2,
   LoaderCircle, MapPin, RefreshCw, Road, ShieldCheck, Sparkles, X,
@@ -54,10 +55,6 @@ export default function HomePage() {
   const [video, setVideo] = useState<File | null>(null);
   const [images, setImages] = useState<File[]>([]);
   const [gps, setGps] = useState<File | null>(null);
-  const [editType, setEditType] = useState<DefectType>("other");
-  const [editSeverity, setEditSeverity] = useState<Severity>("unknown");
-  const [editLatitude, setEditLatitude] = useState("");
-  const [editLongitude, setEditLongitude] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ text: string; kind: "error" | "success" | "info" } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -112,33 +109,31 @@ export default function HomePage() {
 
   const activeSession = sessions.find((item) => item.id === activeId) ?? null;
   const allDefects = activeSession?.defects ?? [];
-  const visibleDefects = useMemo(() => allDefects.filter((item) => {
+  const visibleDefects = allDefects.filter((item) => {
     return (typeFilter === "all" || item.defect_type === typeFilter)
       && (severityFilter === "all" || item.severity_estimated === severityFilter)
       && (statusFilter === "all" || item.review_status === statusFilter);
-  }), [allDefects, typeFilter, severityFilter, statusFilter]);
-  const selected = allDefects.find((item) => item.id === selectedId) ?? visibleDefects[0] ?? null;
+  });
+  const selected = visibleDefects.find((item) => item.id === selectedId) ?? visibleDefects[0] ?? null;
   const selectedFrame = selected?.frame_id
     ? activeSession?.image_results?.find((frame) => frame.frame_id === selected.frame_id)
     : undefined;
   const selectedEvidenceUrl = selected?.evidence_url ?? selectedFrame?.evidence_url ?? null;
 
-  useEffect(() => {
-    if (!selected) return;
-    setEditType(selected.defect_type);
-    setEditSeverity(selected.severity_estimated);
-    setEditLatitude(selected.latitude === null ? "" : String(selected.latitude));
-    setEditLongitude(selected.longitude === null ? "" : String(selected.longitude));
-  }, [selected?.id]);
-  const pendingCount = allDefects.filter((item) => item.review_status === "pending").length;
   const highCount = allDefects.filter((item) => item.severity_estimated === "high").length;
-  const georeferencedCount = allDefects.filter((item) => item.latitude !== null && item.longitude !== null).length;
   const summary = activeSession?.analysis_summary;
   const conditions = ["good", "fair", "poor", "not_assessable"];
 
   async function submitVideo(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const form = event.currentTarget;
     if (!video && images.length === 0) return;
+    const clearUploads = () => {
+      form.querySelectorAll<HTMLInputElement>('input[type="file"]').forEach((input) => { input.value = ""; });
+      setVideo(null);
+      setImages([]);
+      setGps(null);
+    };
     setBusy(true);
     setNotice(null);
     try {
@@ -147,13 +142,11 @@ export default function HomePage() {
           ? await api.analyzeLocalImages(name.trim() || "Secuencia de imágenes", images, gps ?? undefined)
           : await api.analyzeLocalVideo(name.trim() || video?.name || "Video de recorrido", video!, gps ?? undefined);
         await saveLocalSession(localSession);
+        clearUploads();
         setSessions((current) => [localSession, ...current]);
         setActiveId(localSession.id);
         setSelectedId(localSession.defects[0]?.id ?? null);
         setSynthetic(false);
-        setImages([]);
-        setVideo(null);
-        setGps(null);
         setNotice({
           text: `Análisis local listo: ${localSession.analysis_summary?.frames_total ?? 0} fotogramas procesados, ${localSession.defects.length} detecciones. Se conserva en este navegador.`,
           kind: "success",
@@ -167,6 +160,7 @@ export default function HomePage() {
       setSelectedId(null);
       if (video) await api.upload(session.id, video, gps ?? undefined);
       else await api.uploadImages(session.id, images, gps ?? undefined);
+      clearUploads();
       setNotice({ text: "Archivos recibidos. Se están procesando en segundo plano; el panel se actualizará al terminar.", kind: "success" });
       for (let attempt = 0; attempt < 90; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -205,7 +199,8 @@ export default function HomePage() {
     }
     try {
       const saved = await api.sessions();
-      setSessions(saved);
+      const localSessions = await loadLocalSessions().catch(() => []);
+      setSessions([...localSessions, ...saved]);
       const current = saved.find((item) => item.id === activeId) ?? saved[0];
       if (current) {
         setActiveId(current.id);
@@ -220,15 +215,18 @@ export default function HomePage() {
   async function changeReviewStatus(defect: Defect, review_status: ReviewStatus) {
     if (defect.is_synthetic || defect.is_local) {
       const session = sessions.find((item) => item.id === defect.session_id);
-      const updatedSession = session ? {
+      if (!session) return;
+      const updatedSession = {
         ...session,
         defects: session.defects.map((item) => item.id === defect.id ? { ...item, review_status } : item),
-      } : null;
-      setSessions((current) => current.map((session) => ({
-        ...session,
-        defects: session.defects.map((item) => item.id === defect.id ? { ...item, review_status } : item),
-      })));
-      if (updatedSession?.is_local) await saveLocalSession(updatedSession);
+      };
+      try {
+        if (updatedSession.is_local) await saveLocalSession(updatedSession);
+        setSessions((current) => current.map((item) => item.id === session.id ? updatedSession : item));
+        if (updatedSession.is_local) setNotice({ text: "Revisión local guardada en este navegador.", kind: "success" });
+      } catch (error) {
+        setNotice({ text: error instanceof Error ? error.message : "No se pudo guardar la revisión local.", kind: "error" });
+      }
       return;
     }
     try {
@@ -242,20 +240,20 @@ export default function HomePage() {
     }
   }
 
-  async function saveCorrection(defect: Defect) {
-    const hasLatitude = editLatitude.trim() !== "";
-    const hasLongitude = editLongitude.trim() !== "";
+  async function saveCorrection(defect: Defect, draft: CorrectionDraft) {
+    const hasLatitude = draft.latitude.trim() !== "";
+    const hasLongitude = draft.longitude.trim() !== "";
     if (hasLatitude !== hasLongitude) {
       setNotice({ text: "Para corregir la ubicación completa latitud y longitud.", kind: "error" });
       return;
     }
     const updates: Partial<Pick<Defect, "defect_type" | "severity_estimated" | "latitude" | "longitude">> = {
-      defect_type: editType,
-      severity_estimated: editSeverity,
+      defect_type: draft.defect_type,
+      severity_estimated: draft.severity_estimated,
     };
     if (hasLatitude && hasLongitude) {
-      const latitude = Number(editLatitude);
-      const longitude = Number(editLongitude);
+      const latitude = Number(draft.latitude);
+      const longitude = Number(draft.longitude);
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
         setNotice({ text: "Revisa las coordenadas: latitud va de -90 a 90 y longitud de -180 a 180.", kind: "error" });
         return;
@@ -265,16 +263,18 @@ export default function HomePage() {
     }
     if (defect.is_synthetic || defect.is_local) {
       const session = sessions.find((item) => item.id === defect.session_id);
-      const updatedSession = session ? {
+      if (!session) return;
+      const updatedSession = {
         ...session,
         defects: session.defects.map((item) => item.id === defect.id ? { ...item, ...updates } : item),
-      } : null;
-      setSessions((current) => current.map((session) => ({
-        ...session,
-        defects: session.defects.map((item) => item.id === defect.id ? { ...item, ...updates } : item),
-      })));
-      if (updatedSession?.is_local) await saveLocalSession(updatedSession);
-      setNotice({ text: defect.is_local ? "Corrección aplicada a este análisis local del navegador." : "Cambios aplicados solo a esta demostración sintética.", kind: "info" });
+      };
+      try {
+        if (updatedSession.is_local) await saveLocalSession(updatedSession);
+        setSessions((current) => current.map((item) => item.id === session.id ? updatedSession : item));
+        setNotice({ text: defect.is_local ? "Corrección aplicada a este análisis local del navegador." : "Cambios aplicados solo a esta demostración sintética.", kind: "info" });
+      } catch (error) {
+        setNotice({ text: error instanceof Error ? error.message : "No se pudo guardar la corrección local.", kind: "error" });
+      }
       return;
     }
     try {
@@ -346,7 +346,7 @@ export default function HomePage() {
           <div className="frame-gallery">{activeSession.image_results.map((frame) => {
             const frameDefect = activeSession.defects.find((item) => item.frame_id === frame.frame_id);
             return <button type="button" className="frame-card" key={frame.frame_id} onClick={() => setSelectedId(frameDefect?.id ?? null)}>
-              <img src={frame.evidence_url} alt={`Fotograma ${frame.file_name}`} loading="lazy" />
+              <Image src={frame.evidence_url} alt={`Fotograma ${frame.file_name}`} width={320} height={200} unoptimized loading="lazy" />
               <span className="frame-card-name" title={frame.file_name}>{frame.file_name}</span>
               <span className="frame-card-meta">{CONDITION_LABELS[frame.road_condition]} · {frame.defect_count} {frame.defect_count === 1 ? "detección" : "detecciones"}</span>
             </button>;
@@ -414,7 +414,7 @@ export default function HomePage() {
             </div>
             {selected && <div className="detail">
               <div className="detail-top"><div className="detail-title">Detalle de observación</div><span className="chip">{Math.round(selected.confidence * 100)}% confianza visual</span></div>
-              {selectedEvidenceUrl ? <img className="evidence" src={selectedEvidenceUrl} alt={selected.is_synthetic ? "Foto pública de referencia" : "Fotograma usado como evidencia"} /> : (
+              {selectedEvidenceUrl ? <Image className="evidence" src={selectedEvidenceUrl} alt={selected.is_synthetic ? "Foto pública de referencia" : "Fotograma usado como evidencia"} width={960} height={480} unoptimized /> : (
                 <div className="rounded-lg border border-dashed border-slate-200 bg-white p-3 text-[10px] leading-5 text-slate-500">{selected.is_synthetic ? "Evidencia ilustrativa no adjunta en esta demo." : "No hay imagen de evidencia disponible."}</div>
               )}
               {selected.is_synthetic && selected.evidence_url && <p className="text-[9px] leading-4 text-slate-500 mt-1">Foto de referencia pública{selected.evidence_source_url && selected.evidence_credit ? <> · <a href={selected.evidence_source_url} target="_blank" rel="noreferrer" className="underline">{selected.evidence_credit}</a></> : null}. La clasificación es sintética; esta foto no se analizó en vivo.</p>}
@@ -424,29 +424,12 @@ export default function HomePage() {
                 <div><span>Severidad estimada</span><strong>{SEVERITY_LABELS[selected.severity_estimated]}</strong></div>
                 <div><span>Observada</span><strong>{formatTime(selected.first_observed_at)}</strong></div>
               </div>
-              <div className="correction-grid">
-                <label>Tipo
-                  <select className="select" value={editType} onChange={(event) => setEditType(event.target.value as DefectType)}>
-                    {Object.entries(TYPE_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
-                  </select>
-                </label>
-                <label>Severidad
-                  <select className="select" value={editSeverity} onChange={(event) => setEditSeverity(event.target.value as Severity)}>
-                    {Object.entries(SEVERITY_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
-                  </select>
-                </label>
-                <label>Latitud
-                  <input className="select" inputMode="decimal" value={editLatitude} onChange={(event) => setEditLatitude(event.target.value)} placeholder="-34.60" />
-                </label>
-                <label>Longitud
-                  <input className="select" inputMode="decimal" value={editLongitude} onChange={(event) => setEditLongitude(event.target.value)} placeholder="-58.38" />
-                </label>
-              </div>
-              <div className="detail-actions">
-                <button className="button" onClick={() => void saveCorrection(selected)}><Check size={13} />Guardar corrección</button>
-                <button className="button primary" onClick={() => void changeReviewStatus(selected, "confirmed")}><Check size={13} />Confirmar</button>
-                <button className="button" onClick={() => void changeReviewStatus(selected, "dismissed")}><X size={13} />Descartar</button>
-              </div>
+              <CorrectionEditor
+                key={`${selected.id}:${selected.defect_type}:${selected.severity_estimated}:${selected.latitude}:${selected.longitude}`}
+                defect={selected}
+                onSave={saveCorrection}
+                onReviewStatus={changeReviewStatus}
+              />
             </div>}
           </aside>
         </section>
@@ -476,4 +459,48 @@ export default function HomePage() {
 
 function Metric({ label, value, icon, iconClass = "" }: { label: string; value: string | number; icon: React.ReactNode; iconClass?: string }) {
   return <div className="metric-card"><div><div className="metric-label">{label}</div><div className="metric-value">{value}</div></div><div className={`metric-icon ${iconClass}`}>{icon}</div></div>;
+}
+
+interface CorrectionDraft {
+  defect_type: DefectType;
+  severity_estimated: Severity;
+  latitude: string;
+  longitude: string;
+}
+
+function CorrectionEditor({ defect, onSave, onReviewStatus }: {
+  defect: Defect;
+  onSave: (defect: Defect, draft: CorrectionDraft) => Promise<void>;
+  onReviewStatus: (defect: Defect, status: ReviewStatus) => Promise<void>;
+}) {
+  const [defectType, setDefectType] = useState<DefectType>(defect.defect_type);
+  const [severity, setSeverity] = useState<Severity>(defect.severity_estimated);
+  const [latitude, setLatitude] = useState(defect.latitude === null ? "" : String(defect.latitude));
+  const [longitude, setLongitude] = useState(defect.longitude === null ? "" : String(defect.longitude));
+
+  return <>
+    <div className="correction-grid">
+      <label>Tipo
+        <select className="select" value={defectType} onChange={(event) => setDefectType(event.target.value as DefectType)}>
+          {Object.entries(TYPE_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+        </select>
+      </label>
+      <label>Severidad
+        <select className="select" value={severity} onChange={(event) => setSeverity(event.target.value as Severity)}>
+          {Object.entries(SEVERITY_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+        </select>
+      </label>
+      <label>Latitud
+        <input className="select" inputMode="decimal" value={latitude} onChange={(event) => setLatitude(event.target.value)} placeholder="-32.89" />
+      </label>
+      <label>Longitud
+        <input className="select" inputMode="decimal" value={longitude} onChange={(event) => setLongitude(event.target.value)} placeholder="-68.84" />
+      </label>
+    </div>
+    <div className="detail-actions">
+      <button className="button" onClick={() => void onSave(defect, { defect_type: defectType, severity_estimated: severity, latitude, longitude })}><Check size={13} />Guardar corrección</button>
+      <button className="button primary" onClick={() => void onReviewStatus(defect, "confirmed")}><Check size={13} />Confirmar</button>
+      <button className="button" onClick={() => void onReviewStatus(defect, "dismissed")}><X size={13} />Descartar</button>
+    </div>
+  </>;
 }
