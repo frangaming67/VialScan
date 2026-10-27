@@ -315,7 +315,7 @@ export default function HomePage() {
             <div className="map-shell">
               {loading ? <div className="map-canvas grid place-items-center text-sm text-slate-500">Preparando mapa…</div>
                 : <RoadMap defects={visibleDefects} conditionPoints={activeSession?.condition_points ?? []} routeSegments={activeSession?.route_segments ?? []} selectedId={selected?.id ?? null} onSelect={setSelectedId} />}
-              {synthetic && <div className="map-label">RECORRIDO SINTÉTICO · UBICACIONES DE EJEMPLO</div>}
+              {synthetic && <div className="map-label">RECORRIDO SINTÉTICO · MENDOZA</div>}
               <div className="map-legend">
                 <span className="legend-item"><i className="legend-dot" style={{ background: CONDITION_COLORS.good }} />Buen estado</span>
                 <span className="legend-item"><i className="legend-dot" style={{ background: CONDITION_COLORS.fair }} />Leve</span>

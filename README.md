@@ -83,7 +83,7 @@ El análisis se procesa con una tarea simple del backend. El estado de sesión p
 ## Limitaciones conocidas
 
 - Sin las variables de Supabase y OpenAI, la carga de video, georreferenciación y persistencia compartida no están disponibles; las fotos pueden analizarse localmente y los resultados viven en la sesión actual del navegador.
-- La geometría de calles de la ruta sintética de Buenos Aires se preparó con OSRM sobre datos de OpenStreetMap. El mapa muestra atribución a OpenStreetMap.
+- La geometría de calles de la ruta sintética del centro de Mendoza se preparó con OSRM sobre datos de OpenStreetMap. El mapa muestra atribución a OpenStreetMap.
 - Los modelos multimodales pueden equivocarse en pavimentos, sombras y reflejos; se guarda su salida original y debe revisarse.
 - La geolocalización asociada al fotograma es aproximada. El GPS debe estar sincronizado temporalmente con el video.
 - La severidad visual no mide profundidad ni dimensiones reales. Una versión posterior podría incorporar calibración, acelerómetro, cámara estéreo o sensor de profundidad.
