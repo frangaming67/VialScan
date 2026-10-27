@@ -7,6 +7,7 @@ MVP para relevar y visualizar el estado de calles con videos de recorridos. Extr
 - Panel Next.js en español con mapa Leaflet/OpenStreetMap, filtros, detalle y revisión humana.
 - API FastAPI para sesiones, cargas, estado de procesamiento, consultas y revisión de incidencias.
 - Extracción de fotogramas con OpenCV y análisis visual mediante OpenAI Responses API.
+- Guía de referencia cargada en el backend para distinguir estado general, baches, grietas, ahuellamientos, reparaciones y señales que suelen confundirse.
 - Esquema PostgreSQL/PostGIS, migración inicial e índices espaciales GiST.
 - Evidencias en Supabase Storage con enlaces firmados.
 - Modo de demostración con datos sintéticos claramente identificados, sin credenciales externas.
@@ -63,6 +64,8 @@ La cámara en vivo queda fuera del flujo obligatorio. El MVP prioriza la carga d
 La severidad es estimada y se calcula con una heurística versionada (`heuristic-v1`) que combina categoría, confianza y área aparente de una caja aproximada. No estima profundidad, volumen ni tamaño físico. Las observaciones consecutivas del mismo tipo se agrupan dentro de la misma sesión si el tiempo y, cuando existe, la ubicación aproximada coinciden. Cada detección original queda vinculada a su fotograma.
 
 Las incidencias empiezan como `pending` y pueden quedar `confirmed` o `dismissed`. En el panel se puede corregir tipo, severidad y coordenadas. La región que devuelve el modelo es aproximada y se conserva como tal. La detección necesita revisión humana y no está validada para decisiones de seguridad vial.
+
+Cada fotograma también conserva una clasificación general (`good`, `fair`, `poor`, `not_assessable`), incluso cuando no hay un defecto. La sesión resume cuántos cuadros cayeron en cada estado. La guía visual está en `backend/app/data/road_condition_guide.json`: su vocabulario se basa en categorías publicadas por RDD2022 y OpenDataNI. Se incluye atribución y licencia en ese archivo; no se descargaron ni incorporaron imágenes de esos conjuntos. Esta referencia orienta el prompt, no entrena ni valida el modelo.
 
 ## API
 

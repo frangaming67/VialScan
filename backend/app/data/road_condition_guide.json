@@ -1,0 +1,127 @@
+{
+  "version": "2026-10-27.1",
+  "purpose": "Reference notes for visual road-condition classification. These definitions guide model prompts; they are not labeled training images.",
+  "condition_levels": [
+    {
+      "id": "good",
+      "label_es": "Buen estado visible",
+      "definition": "The visible drivable pavement is continuous and reasonably even, with no clearly visible active defect. Do not call a road new based on an image."
+    },
+    {
+      "id": "fair",
+      "label_es": "Deterioro leve o localizado",
+      "definition": "The road remains mostly continuous but has limited cracks, small repairs, early wear, or isolated low-severity defects."
+    },
+    {
+      "id": "poor",
+      "label_es": "Deterioro marcado",
+      "definition": "One or more clearly visible potholes, broad deformation, connected alligator cracking, severe material loss, or multiple defects materially affect the visible pavement."
+    },
+    {
+      "id": "not_assessable",
+      "label_es": "No evaluable",
+      "definition": "The drivable road surface is absent, too small, blocked, blurred, dark, overexposed, or otherwise not clear enough to assess."
+    }
+  ],
+  "defects": [
+    {
+      "id": "longitudinal_crack",
+      "label_es": "Grieta longitudinal",
+      "definition": "A narrow crack running mainly in the direction of travel, often parallel to the lane or pavement edge.",
+      "visual_cues": "A visible split in the pavement surface with a lengthwise orientation.",
+      "avoid_confusing_with": "Lane paint, a sealed construction joint, tar seams, shadows, or tire marks."
+    },
+    {
+      "id": "transverse_crack",
+      "label_es": "Grieta transversal",
+      "definition": "A crack crossing mainly across the direction of travel.",
+      "visual_cues": "A distinct line that cuts across much of the visible lane.",
+      "avoid_confusing_with": "Painted lane markings, expansion joints, crosswalks, or image compression."
+    },
+    {
+      "id": "alligator_crack",
+      "label_es": "Fisuración tipo piel de cocodrilo",
+      "definition": "A connected network of small polygonal cracks, commonly resembling scales or a mesh.",
+      "visual_cues": "Several interlinked cracks forming repeated small polygons over a pavement area.",
+      "avoid_confusing_with": "A few isolated cracks, road markings, cobblestones, or naturally patterned pavement."
+    },
+    {
+      "id": "pothole",
+      "label_es": "Bache o pozo",
+      "definition": "A localized cavity or missing pavement material with a visible rim, broken surface, or recessed appearance.",
+      "visual_cues": "An irregular bounded break in the road surface; surrounding broken edges strengthen the evidence.",
+      "avoid_confusing_with": "A dark shadow, puddle, manhole cover, patch, or painted marking. Do not infer depth from a monocular image."
+    },
+    {
+      "id": "patch",
+      "label_es": "Parche o reparación",
+      "definition": "A localized area of replaced or repaired pavement with a visible material or texture boundary.",
+      "visual_cues": "A bounded area with a different texture, color, or seam, often rectangular or irregular.",
+      "avoid_confusing_with": "An open pothole. A patch is evidence of repair and is not automatically an active defect."
+    },
+    {
+      "id": "rutting",
+      "label_es": "Ahuellamiento",
+      "definition": "Longitudinal depressions or grooves in the wheel paths.",
+      "visual_cues": "Parallel shallow channels or raised edges following vehicle wheel paths over distance.",
+      "avoid_confusing_with": "Perspective, lighting bands, tire marks, or a road crown. Without depth sensing, describe only visible shape."
+    },
+    {
+      "id": "deformation",
+      "label_es": "Deformación o hundimiento",
+      "definition": "A visible localized sag, bulge, settlement, or uneven pavement profile that is not a distinct pothole.",
+      "visual_cues": "A change in pavement plane, displaced surface, or uneven patch boundary.",
+      "avoid_confusing_with": "Normal road camber, perspective, moving shadows, or vehicle motion blur."
+    },
+    {
+      "id": "raveling",
+      "label_es": "Desgranamiento o pérdida de material",
+      "definition": "A visibly rough, porous, or fragmenting pavement surface with aggregate or material loss.",
+      "visual_cues": "A rough area with small exposed aggregate or a visibly deteriorated texture.",
+      "avoid_confusing_with": "Normal coarse asphalt texture, gravel shoulders, dirt, or image noise."
+    },
+    {
+      "id": "edge_break",
+      "label_es": "Rotura de borde",
+      "definition": "Broken or missing pavement along the road edge, often where the paved surface meets a shoulder.",
+      "visual_cues": "A fractured, crumbling, or missing strip at the pavement boundary.",
+      "avoid_confusing_with": "An intentionally unpaved shoulder or a normal pavement edge."
+    },
+    {
+      "id": "other",
+      "label_es": "Otro defecto visible",
+      "definition": "A visible pavement defect that does not fit the named classes.",
+      "visual_cues": "Use only when a specific surface irregularity is visible and the defined classes do not fit.",
+      "avoid_confusing_with": "Road furniture, debris, vehicles, stains, or objects that are not pavement damage."
+    }
+  ],
+  "review_rules": [
+    "Classify only the visible drivable pavement, not sidewalks, buildings, vehicles, or vegetation.",
+    "If evidence is ambiguous, use not_assessable or type other with low confidence; do not invent a defect.",
+    "Good means no defect is visible in this frame, not that the entire street or road is certified safe.",
+    "Do not infer pavement age, defect depth, physical size, repair priority, or structural cause from one monocular frame.",
+    "Severity is a visual estimate for human review, never a measured engineering rating."
+  ],
+  "sources": [
+    {
+      "title": "RDD2022: The multi-national Road Damage Dataset released through CRDDC'2022",
+      "url": "https://doi.org/10.6084/m9.figshare.21431547",
+      "license": "CC BY 4.0",
+      "used_for": "Road damage taxonomy: longitudinal cracks, transverse cracks, alligator cracks, and potholes. No source images or annotations are bundled with this project.",
+      "attribution": "Deeksha Arya et al., RDD2022, Figshare, 2022.",
+      "label_mapping": {
+        "D00": "longitudinal_crack",
+        "D10": "transverse_crack",
+        "D20": "alligator_crack",
+        "D40": "pothole"
+      }
+    },
+    {
+      "title": "Carriageway and Footway Surface Defects",
+      "url": "https://admin.opendatani.gov.uk/dataset/surface-defects",
+      "license": "UK Open Government Licence",
+      "license_url": "https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/",
+      "used_for": "Supplementary defect vocabulary including rutted, depressed, cracked, and uneven surfaces. No source records are bundled with this project."
+    }
+  ]
+}

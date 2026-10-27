@@ -1,5 +1,6 @@
 import logging
 import math
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
@@ -66,7 +67,11 @@ def process_session(
             extracted, duration = extract_frames(video_path, work_dir, settings.frame_interval_seconds)
             video_asset.duration_seconds = duration
             frames = [(elapsed, path, video_asset) for elapsed, path in extracted]
-        previous: RoadDefect | None = None
+        previous_by_type: dict[str, list[RoadDefect]] = {}
+        condition_counts: Counter[str] = Counter()
+        category_counts: Counter[str] = Counter()
+        severity_counts: Counter[str] = Counter()
+        total_observations = 0
         for elapsed, frame_path, media_asset in frames:
             frame_path_in_storage = f"sessions/{session_id}/frames/{frame_path.name}"
             upload_object(frame_path_in_storage, frame_path, "image/jpeg")
@@ -88,59 +93,114 @@ def process_session(
             db.flush()
 
             result, raw_text = analyze_image(frame_path)
-            if not result.get("has_defect") or result.get("type") == "none":
-                previous = None
+            condition = result.get("road_condition", "not_assessable")
+            frame_confidence = max(0.0, min(1.0, float(result.get("frame_confidence", 0))))
+            condition_counts[condition] += 1
+            frame.metadata_json = {
+                **(frame.metadata_json or {}),
+                "road_condition": condition,
+                "frame_confidence": frame_confidence,
+                "condition_summary": result.get("summary", ""),
+            }
+
+            defect_items = result.get("defects") or []
+            if not defect_items:
+                # Store the per-frame good/fair/poor/not-assessable result too, not just defects.
+                db.add(Detection(
+                    frame_id=frame.id,
+                    defect_type="none",
+                    confidence=frame_confidence,
+                    description=result.get("summary") or "No se observan defectos viales claros en este fotograma.",
+                    severity_estimated="unknown",
+                    severity_score=0,
+                    severity_version="heuristic-v1",
+                    model_name=settings.openai_model,
+                    prompt_version=PROMPT_VERSION,
+                    raw_output={"response_text": raw_text, "structured": result},
+                ))
+                previous_by_type = {}
                 db.commit()
                 continue
-            severity, score = estimate_severity(result)
-            bbox = result.get("bbox_approx") or []
-            detection = Detection(
-                frame_id=frame.id,
-                defect_type=result["type"],
-                confidence=max(0, min(1, float(result["confidence"]))),
-                description=result["description"],
-                region_json={"bbox_approx": bbox} if bbox else None,
-                severity_estimated=severity,
-                severity_score=score,
-                severity_version="heuristic-v1",
-                model_name=settings.openai_model,
-                prompt_version=PROMPT_VERSION,
-                raw_output={"response_text": raw_text, "structured": result},
-            )
-            db.add(detection)
-            db.flush()
 
-            if _can_merge(previous, detection, elapsed, latitude, longitude, matched_point is not None):
-                previous.last_observed_at = elapsed
-                previous.confidence = max(previous.confidence, detection.confidence)
-                previous.severity_score = max(previous.severity_score, score)
-                if _severity_rank(severity) > _severity_rank(previous.severity_estimated):
-                    previous.severity_estimated = severity
-                db.add(DefectObservation(road_defect_id=previous.id, detection_id=detection.id))
-            else:
-                defect = RoadDefect(
-                    session_id=session_id,
-                    defect_type=detection.defect_type,
-                    location=location,
+            current_by_type: dict[str, list[RoadDefect]] = {}
+            used_previous_ids: set[UUID] = set()
+            for item in defect_items:
+                severity, score = estimate_severity(item)
+                bbox = item.get("bbox_approx") or []
+                detection = Detection(
+                    frame_id=frame.id,
+                    defect_type=item["type"],
+                    confidence=max(0, min(1, float(item["confidence"]))),
+                    description=item["description"],
+                    region_json={"bbox_approx": bbox} if bbox else None,
                     severity_estimated=severity,
                     severity_score=score,
-                    review_status="pending",
-                    description=detection.description,
-                    first_observed_at=elapsed,
-                    last_observed_at=elapsed,
-                    confidence=detection.confidence,
-                    evidence_frame_id=frame.id,
-                    is_synthetic=False,
+                    severity_version="heuristic-v1",
+                    model_name=settings.openai_model,
+                    prompt_version=PROMPT_VERSION,
+                    raw_output={"response_text": raw_text, "structured": result},
                 )
-                db.add(defect)
+                db.add(detection)
                 db.flush()
-                db.add(DefectObservation(road_defect_id=defect.id, detection_id=detection.id))
-                previous = defect
+                total_observations += 1
+                category_counts[item["type"]] += 1
+                severity_counts[severity] += 1
+
+                candidate = next((prior for prior in previous_by_type.get(item["type"], [])
+                                  if prior.id not in used_previous_ids
+                                  and _can_merge(prior, detection, elapsed, latitude, longitude, matched_point is not None)), None)
+                if candidate is not None:
+                    candidate.last_observed_at = elapsed
+                    candidate.confidence = max(candidate.confidence, detection.confidence)
+                    candidate.severity_score = max(candidate.severity_score, score)
+                    if _severity_rank(severity) > _severity_rank(candidate.severity_estimated):
+                        candidate.severity_estimated = severity
+                    db.add(DefectObservation(road_defect_id=candidate.id, detection_id=detection.id))
+                    defect = candidate
+                    used_previous_ids.add(candidate.id)
+                else:
+                    defect = RoadDefect(
+                        session_id=session_id,
+                        defect_type=detection.defect_type,
+                        location=location,
+                        severity_estimated=severity,
+                        severity_score=score,
+                        review_status="pending",
+                        description=detection.description,
+                        first_observed_at=elapsed,
+                        last_observed_at=elapsed,
+                        confidence=detection.confidence,
+                        evidence_frame_id=frame.id,
+                        is_synthetic=False,
+                    )
+                    db.add(defect)
+                    db.flush()
+                    db.add(DefectObservation(road_defect_id=defect.id, detection_id=detection.id))
+                current_by_type.setdefault(item["type"], []).append(defect)
+            previous_by_type = current_by_type
             db.commit()
 
         session.status = "completed"
         session.finished_at = datetime.now(timezone.utc)
         session.error_message = None
+        all_conditions = ("good", "fair", "poor", "not_assessable")
+        session.metadata_json = {
+            **(session.metadata_json or {}),
+            "analysis_summary": {
+                "frames_total": len(frames),
+                "condition_counts": {key: condition_counts.get(key, 0) for key in all_conditions},
+                "condition_percentages": {
+                    key: round(condition_counts.get(key, 0) * 100 / len(frames), 1) if frames else 0
+                    for key in all_conditions
+                },
+                "defect_observations": total_observations,
+                "consolidated_incidents": sum(1 for _ in db.scalars(select(RoadDefect.id).where(RoadDefect.session_id == session_id))),
+                "category_counts": dict(category_counts),
+                "severity_counts": dict(severity_counts),
+                "prompt_version": PROMPT_VERSION,
+                "severity_version": "heuristic-v1",
+            },
+        }
         db.commit()
     except Exception as exc:
         db.rollback()

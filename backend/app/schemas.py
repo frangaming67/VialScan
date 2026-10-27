@@ -5,7 +5,10 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 
-DefectType = Literal["pothole", "crack", "patch", "deformation", "other"]
+DefectType = Literal[
+    "longitudinal_crack", "transverse_crack", "alligator_crack", "pothole",
+    "patch", "rutting", "deformation", "raveling", "edge_break", "other",
+]
 Severity = Literal["low", "medium", "high", "unknown"]
 ReviewStatus = Literal["pending", "confirmed", "dismissed"]
 
@@ -39,6 +42,17 @@ class DefectOut(BaseModel):
     is_synthetic: bool = False
 
 
+class ConditionPointOut(BaseModel):
+    frame_id: UUID
+    elapsed_seconds: float
+    road_condition: Literal["good", "fair", "poor", "not_assessable"]
+    confidence: float
+    summary: str
+    latitude: float | None = None
+    longitude: float | None = None
+    is_synthetic: bool = False
+
+
 class SessionOut(BaseModel):
     id: UUID
     name: str
@@ -46,7 +60,9 @@ class SessionOut(BaseModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     error_message: str | None = None
-    defects: list[DefectOut] = []
+    analysis_summary: dict = Field(default_factory=dict)
+    condition_points: list[ConditionPointOut] = Field(default_factory=list)
+    defects: list[DefectOut] = Field(default_factory=list)
 
 
 class SessionUploadOut(BaseModel):

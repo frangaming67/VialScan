@@ -15,10 +15,21 @@ const RoadMap = dynamic(() => import("@/components/road-map"), {
 });
 
 const TYPE_LABELS: Record<string, string> = {
-  pothole: "Pozo / bache", crack: "Grieta", patch: "Parche", deformation: "Deformación", other: "Otro",
+  longitudinal_crack: "Grieta longitudinal",
+  transverse_crack: "Grieta transversal",
+  alligator_crack: "Fisuración tipo cocodrilo",
+  pothole: "Pozo / bache",
+  patch: "Parche o reparación",
+  rutting: "Ahuellamiento",
+  deformation: "Deformación / hundimiento",
+  raveling: "Desgranamiento",
+  edge_break: "Rotura de borde",
+  other: "Otro defecto",
 };
 const SEVERITY_LABELS: Record<Severity, string> = { low: "Baja", medium: "Media", high: "Alta", unknown: "Sin estimar" };
 const STATUS_LABELS: Record<ReviewStatus, string> = { pending: "Pendiente", confirmed: "Confirmado", dismissed: "Descartado" };
+const CONDITION_LABELS: Record<string, string> = { good: "Buen estado visible", fair: "Deterioro leve", poor: "Deterioro marcado", not_assessable: "No evaluable" };
+const CONDITION_COLORS: Record<string, string> = { good: "#55a27b", fair: "#e4ac4c", poor: "#d95d50", not_assessable: "#9aa7a9" };
 const STATUS_COPY: Record<string, string> = {
   created: "Creada", queued: "En cola", processing: "Analizando", completed: "Completado", failed: "Error",
 };
@@ -113,6 +124,8 @@ export default function HomePage() {
   const pendingCount = allDefects.filter((item) => item.review_status === "pending").length;
   const highCount = allDefects.filter((item) => item.severity_estimated === "high").length;
   const georeferencedCount = allDefects.filter((item) => item.latitude !== null && item.longitude !== null).length;
+  const summary = activeSession?.analysis_summary;
+  const conditions = ["good", "fair", "poor", "not_assessable"];
 
   async function submitVideo(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -257,27 +270,42 @@ export default function HomePage() {
         </section>
 
         <section className="metrics" aria-label="Resumen del recorrido">
-          <Metric label="Incidencias detectadas" value={allDefects.length} icon={<Activity size={17} />} />
-          <Metric label="Requieren revisión" value={pendingCount} icon={<Clock3 size={17} />} iconClass="warn" />
-          <Metric label="Prioridad alta" value={highCount} icon={<AlertTriangle size={17} />} iconClass="alert" />
-          <Metric label="Con ubicación" value={`${georeferencedCount}/${allDefects.length}`} icon={<MapPin size={17} />} />
+          <Metric label="Fotogramas analizados" value={summary?.frames_total ?? "—"} icon={<Activity size={17} />} />
+          <Metric label="Buen estado visible" value={summary ? `${summary.condition_percentages?.good ?? 0}%` : "—"} icon={<Road size={17} />} />
+          <Metric label="Incidencias agrupadas" value={summary?.consolidated_incidents ?? allDefects.length} icon={<AlertTriangle size={17} />} iconClass="warn" />
+          <Metric label="Prioridad alta" value={highCount} icon={<Clock3 size={17} />} iconClass="alert" />
+        </section>
+
+        <section className="panel condition-panel" aria-label="Distribución del estado visual">
+          <div className="condition-heading"><div><div className="panel-title">Evaluación visual del recorrido</div><div className="panel-caption">Distribución de los fotogramas muestreados; no certifica el estado de toda la calle</div></div><span className="chip">{summary?.frames_total ?? 0} cuadros</span></div>
+          <div className="condition-grid">
+            {conditions.map((condition) => {
+              const percentage = summary?.condition_percentages?.[condition] ?? 0;
+              const count = summary?.condition_counts?.[condition] ?? 0;
+              return <div className="condition-item" key={condition}>
+                <div className="condition-label"><span><i className="legend-dot" style={{ background: CONDITION_COLORS[condition] }} />{CONDITION_LABELS[condition]}</span><strong>{count} <small>({percentage}%)</small></strong></div>
+                <div className="condition-track"><div className="condition-fill" style={{ width: `${Math.max(0, Math.min(100, percentage))}%`, background: CONDITION_COLORS[condition] }} /></div>
+              </div>;
+            })}
+          </div>
         </section>
 
         <section className="workspace-grid">
           <div className="panel">
             <div className="panel-head">
-              <div><div className="panel-title">Recorrido y observaciones</div><div className="panel-caption">Los puntos muestran ubicaciones aproximadas asociadas al video</div></div>
+              <div><div className="panel-title">Recorrido y observaciones</div><div className="panel-caption">El trazo resume el estado por fotograma; los círculos grandes marcan incidencias</div></div>
               {activeSession && <span className={`chip ${activeSession.status === "completed" ? "confirmed" : ""}`}>{STATUS_COPY[activeSession.status] ?? activeSession.status}</span>}
             </div>
             <div className="map-shell">
               {loading ? <div className="map-canvas grid place-items-center text-sm text-slate-500">Preparando mapa…</div>
-                : <RoadMap defects={visibleDefects} selectedId={selected?.id ?? null} onSelect={setSelectedId} />}
+                : <RoadMap defects={visibleDefects} conditionPoints={activeSession?.condition_points ?? []} selectedId={selected?.id ?? null} onSelect={setSelectedId} />}
               {synthetic && <div className="map-label">RECORRIDO SINTÉTICO · UBICACIONES DE EJEMPLO</div>}
               <div className="map-legend">
-                <span className="legend-item"><i className="legend-dot" style={{ background: "#e15d4f" }} />Alta</span>
-                <span className="legend-item"><i className="legend-dot" style={{ background: "#e9a23b" }} />Media</span>
-                <span className="legend-item"><i className="legend-dot" style={{ background: "#45a67b" }} />Baja</span>
-                <span className="legend-item"><i className="legend-dot" style={{ background: "#728096" }} />Sin estimar</span>
+                <span className="legend-item"><i className="legend-dot" style={{ background: CONDITION_COLORS.good }} />Buen estado</span>
+                <span className="legend-item"><i className="legend-dot" style={{ background: CONDITION_COLORS.fair }} />Leve</span>
+                <span className="legend-item"><i className="legend-dot" style={{ background: CONDITION_COLORS.poor }} />Deteriorado</span>
+                <span className="legend-item"><i className="legend-dot" style={{ background: CONDITION_COLORS.not_assessable }} />No evaluable</span>
+                <span className="legend-item">Círculo grande: incidencia</span>
               </div>
             </div>
           </div>

@@ -16,7 +16,7 @@ from .config import settings
 from .database import SessionLocal, get_db
 from .demo import DEMO
 from .models import Frame, MediaAsset, RoadDefect, ScanSession
-from .schemas import DefectOut, DefectUpdate, SessionCreate, SessionOut, SessionUploadOut
+from .schemas import ConditionPointOut, DefectOut, DefectUpdate, SessionCreate, SessionOut, SessionUploadOut
 from .services.processor import process_session
 from .services.storage import signed_url, upload_object
 
@@ -78,9 +78,33 @@ def _defect_out(db: Session, defect: RoadDefect) -> DefectOut:
 
 def _session_out(db: Session, session: ScanSession) -> SessionOut:
     defects = db.scalars(select(RoadDefect).where(RoadDefect.session_id == session.id).order_by(RoadDefect.first_observed_at)).all()
+    frames = db.scalars(
+        select(Frame)
+        .join(MediaAsset, Frame.media_asset_id == MediaAsset.id)
+        .where(MediaAsset.session_id == session.id)
+        .order_by(Frame.elapsed_seconds)
+    ).all()
+    condition_points = []
+    for frame in frames:
+        latitude = longitude = None
+        if frame.location is not None:
+            point = to_shape(frame.location)
+            longitude, latitude = point.x, point.y
+        metadata = frame.metadata_json or {}
+        condition_points.append(ConditionPointOut(
+            frame_id=frame.id,
+            elapsed_seconds=frame.elapsed_seconds,
+            road_condition=metadata.get("road_condition", "not_assessable"),
+            confidence=metadata.get("frame_confidence", 0),
+            summary=metadata.get("condition_summary", ""),
+            latitude=latitude,
+            longitude=longitude,
+        ))
     return SessionOut(
         id=session.id, name=session.name, status=session.status, started_at=session.started_at,
         finished_at=session.finished_at, error_message=session.error_message,
+        analysis_summary=(session.metadata_json or {}).get("analysis_summary", {}),
+        condition_points=condition_points,
         defects=[_defect_out(db, defect) for defect in defects],
     )
 
