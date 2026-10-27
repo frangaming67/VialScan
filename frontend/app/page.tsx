@@ -307,7 +307,7 @@ export default function HomePage() {
         </section>
 
         <section className="workspace-grid">
-          <div className="panel">
+          <div className="panel map-panel">
             <div className="panel-head">
               <div><div className="panel-title">Recorrido y observaciones</div><div className="panel-caption">El trazo resume el estado por fotograma; los círculos grandes marcan incidencias</div></div>
               {activeSession && <span className={`chip ${activeSession.status === "completed" ? "confirmed" : ""}`}>{STATUS_COPY[activeSession.status] ?? activeSession.status}</span>}
