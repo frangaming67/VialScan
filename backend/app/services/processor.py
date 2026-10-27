@@ -89,6 +89,7 @@ def process_session(
 
             result, raw_text = analyze_image(frame_path)
             if not result.get("has_defect") or result.get("type") == "none":
+                previous = None
                 db.commit()
                 continue
             severity, score = estimate_severity(result)

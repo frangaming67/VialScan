@@ -173,6 +173,8 @@ async def upload_session_media(
     session = db.get(ScanSession, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="No se encontró la sesión.")
+    if session.status != "created":
+        raise HTTPException(status_code=409, detail="Esta sesión ya tiene archivos o está en procesamiento. Crea otra sesión para un nuevo recorrido.")
     video_suffix = Path(video.filename or "video.mp4").suffix.lower()
     if video_suffix not in VIDEO_SUFFIXES:
         raise HTTPException(status_code=415, detail="Formato de video no admitido. Usa MP4, MOV, AVI, WEBM o M4V.")
@@ -205,6 +207,10 @@ async def upload_session_media(
         session.error_message = None
         db.commit()
     except HTTPException:
+        db.rollback()
+        video_path.unlink(missing_ok=True)
+        if gps_path:
+            gps_path.unlink(missing_ok=True)
         raise
     except Exception as exc:
         db.rollback()
@@ -229,6 +235,8 @@ async def upload_session_images(
     session = db.get(ScanSession, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="No se encontró la sesión.")
+    if session.status != "created":
+        raise HTTPException(status_code=409, detail="Esta sesión ya tiene archivos o está en procesamiento. Crea otra sesión para un nuevo recorrido.")
     if not images or len(images) > 30:
         raise HTTPException(status_code=400, detail="Carga entre 1 y 30 imágenes por recorrido.")
     if any(Path(item.filename or "").suffix.lower() not in IMAGE_SUFFIXES for item in images):
