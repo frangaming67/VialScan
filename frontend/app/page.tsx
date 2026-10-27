@@ -67,7 +67,7 @@ export default function HomePage() {
     setActiveId(demo.sessions[0]?.id ?? null);
     setSelectedId(demo.sessions[0]?.defects[0]?.id ?? null);
     setSynthetic(true);
-    setNotice({ text: demo.message, kind: "info" });
+    setNotice(null);
   }, []);
 
   const refreshSession = useCallback(async (id: string) => {
@@ -84,7 +84,6 @@ export default function HomePage() {
       setSessions(demo.sessions);
       setActiveId(demo.sessions[0]?.id ?? null);
       setSelectedId(demo.sessions[0]?.defects[0]?.id ?? null);
-      setNotice({ text: demo.message, kind: "info" });
       if (state.real_processing_ready) {
         try {
           const saved = await api.sessions();
@@ -409,7 +408,6 @@ export default function HomePage() {
           <div>
             <div className="upload-copy"><span className="upload-icon"><CloudUpload size={19} /></span><span><span className="upload-title">Analizar un nuevo recorrido</span><span className="upload-text block">Carga un video corto o una secuencia de imágenes, y opcionalmente el track GPS GPX/CSV.</span></span></div>
             {notice && <div className={`notice ${notice.kind === "error" ? "error" : notice.kind === "success" ? "success" : ""}`}>{notice.text}</div>}
-            {config && !config.real_processing_ready && <div className="notice">Las fotos que selecciones sí se analizan con un detector local. El video, el GPS, el guardado compartido y el procesamiento remoto requieren configurar {config.missing_variables.join(", ")} en <code>.env</code>. Las fotos ilustrativas de la demo no se analizan.</div>}
             {activeSession?.status === "failed" && activeSession.error_message && <div className="notice error">{activeSession.error_message}</div>}
           </div>
           <div className="upload-controls">
